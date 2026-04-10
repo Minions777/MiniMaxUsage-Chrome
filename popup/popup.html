@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=360">
+  <title>MiniMax Token Monitor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container" id="app">
+    <!-- Loading -->
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span>加载中...</span>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content" id="mainContent" style="display:none">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-left">
+          <img src="../icons/icon32.png" alt="logo" class="logo">
+          <span class="title">MiniMax Token</span>
+        </div>
+        <div class="header-right">
+          <button class="btn-icon" id="btnRefresh" title="刷新">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+          </button>
+          <button class="btn-icon" id="btnSettings" title="设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+            </svg>
+          </button>
+          <button class="btn-icon" id="btnHistory" title="历史">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3v5h5M3 8a9 9 0 1018 0 9 9 0 00-18 0zM12 7v5l3 3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- No API Key State -->
+      <div class="empty-state" id="emptyState" style="display:none">
+        <div class="empty-icon">🔑</div>
+        <div class="empty-title">请先设置 API Key</div>
+        <div class="empty-desc">点击右上角 ⚙️ 设置按钮<br>输入你的 MiniMax API Key</div>
+        <button class="btn-primary" id="btnGoSettings">去设置</button>
+      </div>
+
+      <!-- Usage Display -->
+      <div class="usage-section" id="usageSection" style="display:none">
+        <!-- Ring -->
+        <div class="ring-container">
+          <svg class="ring-svg" viewBox="0 0 200 200">
+            <circle class="ring-bg" cx="100" cy="100" r="85" fill="none" stroke-width="16"/>
+            <circle class="ring-progress" id="ringProgress" cx="100" cy="100" r="85" fill="none" stroke-width="16"
+              stroke-linecap="round"
+              transform="rotate(-90 100 100)"/>
+          </svg>
+          <div class="ring-center">
+            <div class="ring-percent" id="ringPercent">--%</div>
+            <div class="ring-label">已使用</div>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-row">
+          <div class="stat-item">
+            <div class="stat-value" id="statUsed">--</div>
+            <div class="stat-label">已用</div>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-item">
+            <div class="stat-value" id="statRemains">--</div>
+            <div class="stat-label">剩余</div>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-item">
+            <div class="stat-value" id="statTotal">--</div>
+            <div class="stat-label">总额</div>
+          </div>
+        </div>
+
+        <!-- Auto Refresh Indicator -->
+        <div class="refresh-indicator" id="refreshIndicator">
+          <span class="dot"></span>
+          <span id="refreshText">自动刷新中 · 每 60s</span>
+        </div>
+      </div>
+
+      <!-- Error Display -->
+      <div class="error-state" id="errorState" style="display:none">
+        <div class="error-icon">⚠️</div>
+        <div class="error-message" id="errorMessage">发生错误</div>
+        <button class="btn-primary" id="btnRetry">重试</button>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <span id="lastUpdated">--</span>
+        <span id="endpointLabel">China · 🇨🇳</span>
+      </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="panel" id="settingsPanel" style="display:none">
+      <div class="panel-header">
+        <button class="btn-back" id="btnBackFromSettings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <span>设置</span>
+        <button class="btn-done" id="btnSaveSettings">完成</button>
+      </div>
+      <div class="panel-body">
+        <!-- API Key -->
+        <div class="field">
+          <label>API Key</label>
+          <div class="input-group">
+            <input type="password" id="inputAPIKey" placeholder="输入你的 MiniMax API Key">
+            <button class="btn-eye" id="btnToggleKey">👁</button>
+          </div>
+        </div>
+        <!-- Endpoint -->
+        <div class="field">
+          <label>接口端点</label>
+          <div class="endpoint-options">
+            <label class="endpoint-option">
+              <input type="radio" name="endpoint" value="china" checked>
+              <span>🇨🇳 中国区 (minimaxi.com)</span>
+            </label>
+            <label class="endpoint-option">
+              <input type="radio" name="endpoint" value="international">
+              <span>🌏 国际区 (minimax.io)</span>
+            </label>
+          </div>
+        </div>
+        <!-- Auto Refresh -->
+        <div class="field">
+          <label>自动刷新</label>
+          <div class="toggle-row">
+            <span>启用自动刷新</span>
+            <label class="toggle">
+              <input type="checkbox" id="toggleAutoRefresh" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="field" id="intervalField">
+          <label>刷新间隔</label>
+          <div class="interval-options">
+            <button class="interval-btn" data-value="10">10秒</button>
+            <button class="interval-btn" data-value="30">30秒</button>
+            <button class="interval-btn active" data-value="60">1分钟</button>
+            <button class="interval-btn" data-value="120">2分钟</button>
+            <button class="interval-btn" data-value="300">5分钟</button>
+            <button class="interval-btn" data-value="600">10分钟</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History Panel -->
+    <div class="panel" id="historyPanel" style="display:none">
+      <div class="panel-header">
+        <button class="btn-back" id="btnBackFromHistory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <span>用量历史</span>
+        <button class="btn-text" id="btnClearHistory">清空</button>
+      </div>
+      <div class="panel-body">
+        <!-- Stats Overview -->
+        <div class="history-stats">
+          <div class="history-stat">
+            <div class="history-stat-value" id="histAvg">--%</div>
+            <div class="history-stat-label">平均用量</div>
+          </div>
+          <div class="history-stat">
+            <div class="history-stat-value" id="histMax">--%</div>
+            <div class="history-stat-label">最高用量</div>
+          </div>
+          <div class="history-stat">
+            <div class="history-stat-value" id="histDays">0</div>
+            <div class="history-stat-label">记录天数</div>
+          </div>
+        </div>
+        <!-- Weekly Chart -->
+        <div class="chart-section">
+          <div class="chart-title">近 7 天消耗</div>
+          <div class="bar-chart" id="weeklyChart"></div>
+        </div>
+        <!-- History List -->
+        <div class="history-list" id="historyList"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
