@@ -1,6 +1,7 @@
 // MiniMax Token Monitor - Popup Script
 
 let currentSettings = null;
+let currentTheme = 'neon';
 
 // DOM Elements
 const loading = document.getElementById('loading');
@@ -56,14 +57,19 @@ function formatDate(timestamp) {
 }
 
 function colorForPercentage(pct) {
-  if (pct < 0.5) return { color: 'var(--accent-green)', gradient: 'url(#greenGradient)', shadow: 'rgba(0, 208, 156, 0.4)' };
-  if (pct < 0.8) return { color: 'var(--accent-orange)', gradient: 'url(#orangeGradient)', shadow: 'rgba(245, 166, 35, 0.4)' };
-  return { color: 'var(--accent-red)', gradient: 'url(#redGradient)', shadow: 'rgba(255, 107, 107, 0.4)' };
+  if (pct < 0.5) return { color: 'var(--accent)', gradient: 'url(#greenGradient)', shadow: 'var(--accent-glow)' };
+  if (pct < 0.8) return { color: 'var(--orange-color)', gradient: 'url(#orangeGradient)', shadow: 'rgba(245, 166, 35, 0.4)' };
+  return { color: 'var(--red-color)', gradient: 'url(#redGradient)', shadow: 'rgba(255, 107, 107, 0.4)' };
 }
 
 // Initialize
 async function init() {
   showLoading();
+
+  // Load theme first
+  currentTheme = await getTheme();
+  applyTheme(currentTheme);
+  updateThemeUI(currentTheme);
 
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message) => {
@@ -275,6 +281,23 @@ document.querySelectorAll('.interval-btn').forEach(btn => {
     btn.classList.add('active');
   });
 });
+
+// Theme selection
+document.querySelectorAll('.theme-option').forEach(option => {
+  option.addEventListener('click', () => {
+    const themeId = option.dataset.theme;
+    currentTheme = themeId;
+    applyTheme(themeId);
+    updateThemeUI(themeId);
+    saveTheme(themeId);
+  });
+});
+
+function updateThemeUI(themeId) {
+  document.querySelectorAll('.theme-option').forEach(opt => {
+    opt.classList.toggle('selected', opt.dataset.theme === themeId);
+  });
+}
 
 // Event Listeners - History
 document.getElementById('btnBackFromHistory').addEventListener('click', () => {

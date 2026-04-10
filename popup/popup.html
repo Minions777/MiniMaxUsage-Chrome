@@ -133,6 +133,32 @@
         <button class="btn-done" id="btnSaveSettings">完成</button>
       </div>
       <div class="panel-body">
+        <!-- Theme -->
+        <div class="field">
+          <label>主题外观</label>
+          <div class="theme-grid" id="themeGrid">
+            <div class="theme-option" data-theme="neon">
+              <div class="theme-preview" style="background: linear-gradient(135deg,#00d09c,#00b894)"></div>
+              <span class="theme-name">Neon绿</span>
+            </div>
+            <div class="theme-option" data-theme="ocean">
+              <div class="theme-preview" style="background: linear-gradient(135deg,#00b4ff,#0066cc)"></div>
+              <span class="theme-name">海洋蓝</span>
+            </div>
+            <div class="theme-option" data-theme="sunset">
+              <div class="theme-preview" style="background: linear-gradient(135deg,#ff8c42,#ff5252)"></div>
+              <span class="theme-name">日落橙</span>
+            </div>
+            <div class="theme-option" data-theme="purple">
+              <div class="theme-preview" style="background: linear-gradient(135deg,#a855f7,#7c3aed)"></div>
+              <span class="theme-name">紫色</span>
+            </div>
+            <div class="theme-option" data-theme="mono">
+              <div class="theme-preview" style="background: linear-gradient(135deg,#e0e0e0,#888888)"></div>
+              <span class="theme-name">简约</span>
+            </div>
+          </div>
+        </div>
         <!-- API Key -->
         <div class="field">
           <label>API Key</label>
@@ -218,6 +244,7 @@
     </div>
   </div>
 
+  <script src="themes.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
