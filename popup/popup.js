@@ -56,9 +56,9 @@ function formatDate(timestamp) {
 }
 
 function colorForPercentage(pct) {
-  if (pct < 0.5) return 'var(--accent-green)';
-  if (pct < 0.8) return 'var(--accent-orange)';
-  return 'var(--accent-red)';
+  if (pct < 0.5) return { color: 'var(--accent-green)', gradient: 'url(#greenGradient)', shadow: 'rgba(0, 208, 156, 0.4)' };
+  if (pct < 0.8) return { color: 'var(--accent-orange)', gradient: 'url(#orangeGradient)', shadow: 'rgba(245, 166, 35, 0.4)' };
+  return { color: 'var(--accent-red)', gradient: 'url(#redGradient)', shadow: 'rgba(255, 107, 107, 0.4)' };
 }
 
 // Initialize
@@ -113,13 +113,16 @@ function displayUsage(usage) {
 
   ringProgress.style.strokeDasharray = circumference;
   ringProgress.style.strokeDashoffset = offset;
-  ringProgress.style.stroke = colorForPercentage(pct);
+  const colorInfo = colorForPercentage(pct);
+  ringProgress.style.stroke = colorInfo.gradient;
+  ringProgress.style.filter = `drop-shadow(0 0 8px ${colorInfo.shadow})`;
 
   ringPercent.textContent = Math.round(pct * 100) + '%';
-  ringPercent.style.color = colorForPercentage(pct);
+  ringPercent.style.color = colorInfo.color;
+  ringPercent.style.textShadow = `0 0 20px ${colorInfo.shadow}`;
 
   statUsed.textContent = formatNumber(usage.used);
-  statUsed.style.color = colorForPercentage(pct);
+  statUsed.style.color = colorInfo.color;
 
   statRemains.textContent = formatNumber(usage.remains);
   statRemains.style.color = 'var(--text-primary)';
@@ -376,12 +379,13 @@ function renderHistoryList(days) {
 
     const details = day.records.map(record => {
       const pct = record.total > 0 ? record.used / record.total : 0;
+      const colorInfo = colorForPercentage(pct);
       return `
         <div class="history-record">
           <span style="color:var(--text-muted)">${formatTime(new Date(record.timestamp))}</span>
           <span>已用 ${formatNumber(record.used)}</span>
           <span>剩余 ${formatNumber(record.remains)}</span>
-          <span class="history-record-dot" style="background:${colorForPercentage(pct)}"></span>
+          <span class="history-record-dot" style="background:${colorInfo.color}"></span>
         </div>
       `;
     }).join('');

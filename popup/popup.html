@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=360">
   <title>MiniMax Token Monitor</title>
   <link rel="stylesheet" href="popup.css">
+  <style>
+    /* SVG gradient definitions for ring */
+  </style>
 </head>
 <body>
   <div class="container" id="app">
@@ -54,6 +57,20 @@
         <!-- Ring -->
         <div class="ring-container">
           <svg class="ring-svg" viewBox="0 0 200 200">
+            <defs>
+              <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#00d09c"/>
+                <stop offset="100%" stop-color="#00b894"/>
+              </linearGradient>
+              <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#f5a623"/>
+                <stop offset="100%" stop-color="#e17055"/>
+              </linearGradient>
+              <linearGradient id="redGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#ff6b6b"/>
+                <stop offset="100%" stop-color="#d63031"/>
+              </linearGradient>
+            </defs>
             <circle class="ring-bg" cx="100" cy="100" r="85" fill="none" stroke-width="16"/>
             <circle class="ring-progress" id="ringProgress" cx="100" cy="100" r="85" fill="none" stroke-width="16"
               stroke-linecap="round"
