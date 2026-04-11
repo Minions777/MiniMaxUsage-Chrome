@@ -133,16 +133,42 @@ async function fetchUsage() {
 
     const data = await response.json();
 
-    if (data.code !== 0) {
-      throw new Error(data.msg || 'API Error');
+    // 支持两种响应格式：1) { base_resp: { status_code: 0 } } 2) { code: 0 }
+    const statusCode = data.base_resp?.status_code ?? data.code;
+    const statusMsg = data.base_resp?.status_msg ?? data.msg;
+    if (statusCode !== 0) {
+      throw new Error(statusMsg || 'API Error');
+    }
+
+    // API 返回 model_remains 数组，每个模型一条记录
+    // 聚合所有模型的用量作为总用量
+    const models = data.model_remains || [];
+    let totalUsed = 0;
+    let totalRemains = 0;
+    let totalAll = 0;
+
+    if (models.length > 0) {
+      // 优先取 coding-plan 相关的模型（MiniMax-M* / coding-plan-*）
+      const codingModels = models.filter(m =>
+        m.model_name?.includes('MiniMax-M') ||
+        m.model_name?.includes('coding-plan')
+      );
+      const targetModels = codingModels.length > 0 ? codingModels : models;
+
+      targetModels.forEach(m => {
+        // current_interval_total_count 是当期总额，current_interval_usage_count 是已用
+        totalUsed += m.current_interval_usage_count || 0;
+        totalAll += m.current_interval_total_count || 0;
+        totalRemains += m.current_interval_total_count - m.current_interval_usage_count || 0;
+      });
     }
 
     const usage = {
-      used: data.data.used,
-      remains: data.data.remains,
-      total: data.data.total,
-      resetTime: data.data.resetTime,
-      planType: data.data.planType
+      used: totalUsed,
+      remains: Math.max(0, totalRemains),
+      total: totalAll,
+      resetTime: null,
+      planType: 'Coding Plan'
     };
 
     // 保存最新用量
