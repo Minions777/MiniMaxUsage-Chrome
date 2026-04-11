@@ -277,3 +277,12 @@ body::before {
 }
 .stats-title { font-size: 11px; color: var(--text-secondary); font-weight: 500; }
 .stats-time { font-size: 10px; color: var(--text-muted); }
+
+/* Stats Section - two horizontal groups */
+.stats-section { width: 100%; display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.stats-group { background: var(--glass-bg); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 12px 14px; }
+.stats-label { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; }
+.reset-time { color: var(--text-muted); font-size: 10px; }
+.stats-row { display: flex; align-items: center; justify-content: space-around; }
+.stat-item { flex: 1; text-align: center; }
+.stat-sep { width: 1px; height: 28px; background: var(--border-subtle); }

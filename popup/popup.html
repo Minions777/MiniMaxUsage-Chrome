@@ -91,45 +91,52 @@
           </div>
         </div>
 
-        <!-- Stats Row: 5小时 + 本周 -->
-        <div class="stats-card" id="statsCard">
-          <div class="stats-header">
-            <span class="stats-title">⏱️ 5小时滚动窗口</span>
-            <span class="stats-time" id="intervalResetTime">--</span>
+        <!-- Stats Section -->
+        <div class="stats-section">
+          <!-- 5小时 -->
+          <div class="stats-group">
+            <div class="stats-label">
+              <span>⏱️ 5小时滚动窗口</span>
+              <span class="reset-time" id="intervalResetTime">--</span>
+            </div>
+            <div class="stats-row">
+              <div class="stat-item">
+                <div class="stat-value" id="statUsed">--</div>
+                <div class="stat-label">已用</div>
+              </div>
+              <div class="stat-sep"></div>
+              <div class="stat-item">
+                <div class="stat-value" id="statRemains">--</div>
+                <div class="stat-label">剩余</div>
+              </div>
+              <div class="stat-sep"></div>
+              <div class="stat-item">
+                <div class="stat-value" id="statTotal">1500</div>
+                <div class="stat-label">总额</div>
+              </div>
+            </div>
           </div>
-          <div class="stats-row">
-            <div class="stat-item">
-              <div class="stat-value" id="statUsed">--</div>
-              <div class="stat-label">已用</div>
+          <!-- 本周 -->
+          <div class="stats-group">
+            <div class="stats-label">
+              <span>📅 本周用量</span>
+              <span class="reset-time" id="weeklyResetTime">周一零点重置</span>
             </div>
-            <div class="stat-item">
-              <div class="stat-value" id="statRemains">--</div>
-              <div class="stat-label">剩余</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value" id="statTotal">--</div>
-              <div class="stat-label">总额</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="stats-card" id="weeklyStatsCard">
-          <div class="stats-header">
-            <span class="stats-title">📅 本周用量</span>
-            <span class="stats-time" id="weeklyResetTime">--</span>
-          </div>
-          <div class="stats-row">
-            <div class="stat-item">
-              <div class="stat-value" id="statWeeklyUsed">--</div>
-              <div class="stat-label">已用</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value" id="statWeeklyRemains">--</div>
-              <div class="stat-label">剩余</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value" id="statWeeklyTotal">--</div>
-              <div class="stat-label">总额</div>
+            <div class="stats-row">
+              <div class="stat-item">
+                <div class="stat-value" id="statWeeklyUsed">--</div>
+                <div class="stat-label">已用</div>
+              </div>
+              <div class="stat-sep"></div>
+              <div class="stat-item">
+                <div class="stat-value" id="statWeeklyRemains">--</div>
+                <div class="stat-label">剩余</div>
+              </div>
+              <div class="stat-sep"></div>
+              <div class="stat-item">
+                <div class="stat-value" id="statWeeklyTotal">15000</div>
+                <div class="stat-label">总额</div>
+              </div>
             </div>
           </div>
         </div>

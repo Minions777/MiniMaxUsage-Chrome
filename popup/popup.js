@@ -120,9 +120,10 @@ async function refreshUsageDisplay() {
 
 // Display usage data
 function displayUsage(usage) {
-  // Ring — 基于5小时窗口的百分比
-  const pct = usage.intervalTotal > 0 ? usage.intervalUsed / usage.intervalTotal : 0;
-  const circumference = 2 * Math.PI * 85; // r=85
+  // Ring — 基于5小时窗口的百分比（固定总额1500）
+  const totalFixed = 1500;
+  const pct = totalFixed > 0 ? usage.intervalUsed / totalFixed : 0;
+  const circumference = 2 * Math.PI * 85;
   const offset = circumference * (1 - pct);
 
   ringProgress.style.strokeDasharray = circumference;
@@ -135,12 +136,12 @@ function displayUsage(usage) {
   ringPercent.style.color = colorInfo.color;
   ringPercent.style.textShadow = `0 0 20px ${colorInfo.shadow}`;
 
-  // 5小时滚动窗口数据
+  // 5小时数据
   statUsed.textContent = formatNumber(usage.intervalUsed);
   statUsed.style.color = colorInfo.color;
   statRemains.textContent = formatNumber(usage.intervalRemains);
   statRemains.style.color = 'var(--text-primary)';
-  statTotal.textContent = formatNumber(usage.intervalTotal);
+  // statTotal 固定显示 1500，无需更新
 
   // 5小时重置时间
   if (usage.intervalResetTime) {
@@ -151,15 +152,14 @@ function displayUsage(usage) {
     intervalResetTime.textContent = '--';
   }
 
-  // 本周用量数据
+  // 本周数据（固定总额15000）
   const weeklyPct = usage.weeklyTotal > 0 ? usage.weeklyUsed / usage.weeklyTotal : 0;
   const weeklyColor = colorForPercentage(weeklyPct);
   statWeeklyUsed.textContent = formatNumber(usage.weeklyUsed);
   statWeeklyUsed.style.color = weeklyColor.color;
   statWeeklyRemains.textContent = formatNumber(usage.weeklyRemains);
   statWeeklyRemains.style.color = 'var(--text-primary)';
-  statWeeklyTotal.textContent = formatNumber(usage.weeklyTotal);
-  weeklyResetTime.textContent = '周一零点重置';
+  // statWeeklyTotal 固定显示 15000，无需更新
 
   const now = new Date();
   lastUpdated.textContent = '更新于 ' + formatTime(now);
