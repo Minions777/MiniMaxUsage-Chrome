@@ -6,7 +6,8 @@ const STORAGE_KEYS = {
   AUTO_REFRESH_INTERVAL: 'minimax_auto_refresh_interval',
   AUTO_REFRESH_ENABLED: 'minimax_auto_refresh_enabled',
   HISTORY: 'minimax_usage_history',
-  LAST_USAGE: 'minimax_last_usage'
+  LAST_USAGE: 'minimax_last_usage',
+  LOGS: 'minimax_logs'
 };
 
 const ENDPOINTS = {
@@ -77,6 +78,30 @@ async function addHistoryRecord(usage) {
   await saveHistory(history);
 }
 
+// 日志相关
+async function getLogs() {
+  const result = await chrome.storage.local.get(STORAGE_KEYS.LOGS);
+  return result[STORAGE_KEYS.LOGS] || [];
+}
+
+async function saveLogs(logs) {
+  // 最多保留 200 条
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const filtered = logs.filter(r => r.timestamp > cutoff).slice(-200);
+  await chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: filtered });
+}
+
+async function addLog(type, message) {
+  const logs = await getLogs();
+  logs.unshift({
+    id: Date.now().toString(),
+    timestamp: Date.now(),
+    type: type,
+    message: message
+  });
+  await saveLogs(logs);
+}
+
 // 获取最新用量
 async function fetchUsage() {
   const settings = await getSettings();
@@ -126,11 +151,15 @@ async function fetchUsage() {
     // 添加历史记录
     await addHistoryRecord(usage);
 
+    // 记录成功日志
+    await addLog('success', `获取用量成功 — 已用 ${usage.used} / 总计 ${usage.total}`);
+
     // 更新 badge
     updateBadge(usage);
 
     return usage;
   } catch (error) {
+    await addLog('error', `API 请求失败: ${error.message}`);
     return { error: error.message || 'NETWORK_ERROR' };
   }
 }
@@ -195,6 +224,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'CLEAR_HISTORY':
       chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: [] }).then(sendResponse);
       return true;
+    case 'GET_LOGS':
+      getLogs().then(sendResponse);
+      return true;
+    case 'CLEAR_LOGS':
+      chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: [] }).then(sendResponse);
+      return true;
     case 'START_AUTO_REFRESH':
       startAutoRefresh().then(sendResponse);
       return true;
@@ -203,11 +238,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // 初始化
 (async () => {
+  await addLog('info', 'MiniMax Token Monitor 已启动');
   const settings = await getSettings();
   if (settings.apiKey) {
     // 首次获取用量
     const usage = await fetchUsage();
     // 启动自动刷新
     await startAutoRefresh();
+  } else {
+    await addLog('warn', '未配置 API Key，请先在设置中配置');
   }
 })();

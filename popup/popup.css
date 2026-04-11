@@ -246,3 +246,20 @@ body::before {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
+/* ─── Log Panel ─── */
+.log-list { display: flex; flex-direction: column; gap: 6px; }
+.log-item {
+  padding: 10px 12px; background: var(--glass-bg);
+  border: 1px solid var(--border-subtle); border-radius: 10px;
+  font-size: 11px; line-height: 1.6;
+}
+.log-item-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.log-entry-time { color: var(--text-muted); font-size: 10px; }
+.log-entry-type { font-weight: 600; padding: 1px 6px; border-radius: 4px; font-size: 10px; }
+.log-type-info { background: rgba(0,180,255,0.15); color: #00b4ff; }
+.log-type-success { background: rgba(0,208,156,0.15); color: var(--accent); }
+.log-type-error { background: rgba(255,107,107,0.15); color: var(--red-color); }
+.log-type-warn { background: rgba(245,166,35,0.15); color: var(--orange-color); }
+.log-entry-msg { color: var(--text-secondary); word-break: break-all; }
+.log-empty { text-align: center; padding: 40px 0; color: var(--text-muted); font-size: 13px; }

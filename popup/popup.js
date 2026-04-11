@@ -11,6 +11,8 @@ const usageSection = document.getElementById('usageSection');
 const errorState = document.getElementById('errorState');
 const settingsPanel = document.getElementById('settingsPanel');
 const historyPanel = document.getElementById('historyPanel');
+const logPanel = document.getElementById('logPanel');
+const logList = document.getElementById('logList');
 
 // Ring elements
 const ringProgress = document.getElementById('ringProgress');
@@ -199,7 +201,17 @@ function showHistory() {
   mainContent.style.display = 'none';
   settingsPanel.style.display = 'none';
   historyPanel.style.display = 'flex';
+  logPanel.style.display = 'none';
   loadHistoryData();
+}
+
+function showLogPanel() {
+  loading.style.display = 'none';
+  mainContent.style.display = 'none';
+  settingsPanel.style.display = 'none';
+  historyPanel.style.display = 'none';
+  logPanel.style.display = 'flex';
+  loadLogData();
 }
 
 // Apply settings to UI
@@ -233,6 +245,10 @@ document.getElementById('btnSettings').addEventListener('click', () => {
 
 document.getElementById('btnHistory').addEventListener('click', () => {
   showHistory();
+});
+
+document.getElementById('btnLog').addEventListener('click', () => {
+  showLogPanel();
 });
 
 document.getElementById('btnGoSettings').addEventListener('click', () => {
@@ -326,6 +342,51 @@ document.getElementById('btnClearHistory').addEventListener('click', async () =>
     loadHistoryData();
   }
 });
+
+document.getElementById('btnBackFromLog').addEventListener('click', () => {
+  showMain();
+});
+
+document.getElementById('btnClearLog').addEventListener('click', async () => {
+  if (confirm('确定清空所有日志？')) {
+    await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
+    loadLogData();
+  }
+});
+
+// Load log data
+async function loadLogData() {
+  const logs = await chrome.runtime.sendMessage({ type: 'GET_LOGS' });
+
+  if (!logs || logs.length === 0) {
+    logList.innerHTML = '<div class="log-empty">暂无日志记录</div>';
+    return;
+  }
+
+  // Show newest first, limit to 100
+  const recent = logs.slice(0, 100);
+  logList.innerHTML = recent.map(log => {
+    const time = new Date(log.timestamp);
+    const timeStr = `${time.getHours().toString().padStart(2,'0')}:${time.getMinutes().toString().padStart(2,'0')}:${time.getSeconds().toString().padStart(2,'0')}`;
+    const typeClass = log.type === 'error' ? 'log-type-error' : log.type === 'success' ? 'log-type-success' : log.type === 'warn' ? 'log-type-warn' : 'log-type-info';
+    const typeLabel = log.type === 'error' ? '错误' : log.type === 'success' ? '成功' : log.type === 'warn' ? '警告' : '信息';
+    return `
+      <div class="log-item">
+        <div class="log-item-header">
+          <span class="log-entry-time">${timeStr}</span>
+          <span class="log-entry-type ${typeClass}">${typeLabel}</span>
+        </div>
+        <div class="log-entry-msg">${escapeHtml(log.message)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
 // Load history data
 async function loadHistoryData() {
