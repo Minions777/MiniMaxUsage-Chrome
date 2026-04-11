@@ -253,7 +253,7 @@ document.getElementById('btnBackFromSettings').addEventListener('click', async (
 document.getElementById('btnSaveSettings').addEventListener('click', async () => {
   const settings = {
     apiKey: inputAPIKey.value.trim(),
-    endpoint: document.querySelector('input[name="endpoint"]:checked').value,
+    endpoint: document.querySelector('input[name="endpoint"]:checked')?.value ?? 'china',
     autoRefreshEnabled: toggleAutoRefresh.checked,
     autoRefreshInterval: parseInt(document.querySelector('.interval-btn.active')?.dataset.value || '60')
   };
@@ -280,6 +280,22 @@ document.querySelectorAll('.interval-btn').forEach(btn => {
     document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
   });
+
+// Endpoint option click - toggle selection
+document.querySelectorAll('#settingsPanel .endpoint-option').forEach(option => {
+  option.addEventListener('click', () => {
+    document.querySelectorAll('#settingsPanel .endpoint-option').forEach(opt => {
+      opt.classList.remove('selected');
+      const r = opt.querySelector('input[type="radio"]');
+      if (r) r.checked = false;
+    });
+    const radio = option.querySelector('input[type="radio"]');
+    if (radio) {
+      radio.checked = true;
+      option.classList.add('selected');
+    }
+  });
+});
 });
 
 // Theme selection
