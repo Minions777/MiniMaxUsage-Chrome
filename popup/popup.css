@@ -263,3 +263,17 @@ body::before {
 .log-type-warn { background: rgba(245,166,35,0.15); color: var(--orange-color); }
 .log-entry-msg { color: var(--text-secondary); word-break: break-all; }
 .log-empty { text-align: center; padding: 40px 0; color: var(--text-muted); font-size: 13px; }
+
+/* Stats Card (dual row) */
+.stats-card {
+  width: 100%; margin-bottom: 10px;
+  background: var(--glass-bg); border: 1px solid var(--border-subtle);
+  border-radius: 14px; padding: 12px 14px;
+  backdrop-filter: blur(10px);
+}
+.stats-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.stats-title { font-size: 11px; color: var(--text-secondary); font-weight: 500; }
+.stats-time { font-size: 10px; color: var(--text-muted); }

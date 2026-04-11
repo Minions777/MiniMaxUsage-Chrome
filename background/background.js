@@ -169,6 +169,16 @@ async function fetchUsage() {
     });
 
     const usage = {
+      // 5小时滚动窗口
+      intervalUsed: totalUsed,
+      intervalRemains: totalRemains,
+      intervalTotal: totalAll,
+      intervalResetTime: targetModels[0]?.remains_time || null,
+      // 本周用量
+      weeklyUsed: targetModels.reduce((s, m) => s + (m.current_weekly_total_count - m.current_weekly_usage_count), 0),
+      weeklyRemains: targetModels.reduce((s, m) => s + (m.current_weekly_usage_count || 0), 0),
+      weeklyTotal: targetModels.reduce((s, m) => s + (m.current_weekly_total_count || 0), 0),
+      // 兼容旧字段
       used: totalUsed,
       remains: totalRemains,
       total: totalAll,

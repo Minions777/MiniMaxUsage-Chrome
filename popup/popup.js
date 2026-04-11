@@ -20,6 +20,11 @@ const ringPercent = document.getElementById('ringPercent');
 const statUsed = document.getElementById('statUsed');
 const statRemains = document.getElementById('statRemains');
 const statTotal = document.getElementById('statTotal');
+const intervalResetTime = document.getElementById('intervalResetTime');
+const weeklyResetTime = document.getElementById('weeklyResetTime');
+const statWeeklyUsed = document.getElementById('statWeeklyUsed');
+const statWeeklyRemains = document.getElementById('statWeeklyRemains');
+const statWeeklyTotal = document.getElementById('statWeeklyTotal');
 const lastUpdated = document.getElementById('lastUpdated');
 const endpointLabel = document.getElementById('endpointLabel');
 const refreshIndicator = document.getElementById('refreshIndicator');
@@ -115,7 +120,8 @@ async function refreshUsageDisplay() {
 
 // Display usage data
 function displayUsage(usage) {
-  const pct = usage.total > 0 ? usage.used / usage.total : 0;
+  // Ring — 基于5小时窗口的百分比
+  const pct = usage.intervalTotal > 0 ? usage.intervalUsed / usage.intervalTotal : 0;
   const circumference = 2 * Math.PI * 85; // r=85
   const offset = circumference * (1 - pct);
 
@@ -129,13 +135,31 @@ function displayUsage(usage) {
   ringPercent.style.color = colorInfo.color;
   ringPercent.style.textShadow = `0 0 20px ${colorInfo.shadow}`;
 
-  statUsed.textContent = formatNumber(usage.used);
+  // 5小时滚动窗口数据
+  statUsed.textContent = formatNumber(usage.intervalUsed);
   statUsed.style.color = colorInfo.color;
-
-  statRemains.textContent = formatNumber(usage.remains);
+  statRemains.textContent = formatNumber(usage.intervalRemains);
   statRemains.style.color = 'var(--text-primary)';
+  statTotal.textContent = formatNumber(usage.intervalTotal);
 
-  statTotal.textContent = formatNumber(usage.total);
+  // 5小时重置时间
+  if (usage.intervalResetTime) {
+    const h = Math.floor(usage.intervalResetTime / 3600000);
+    const m = Math.floor((usage.intervalResetTime % 3600000) / 60000);
+    intervalResetTime.textContent = h > 0 ? `${h}小时${m}分后重置` : `${m}分后重置`;
+  } else {
+    intervalResetTime.textContent = '--';
+  }
+
+  // 本周用量数据
+  const weeklyPct = usage.weeklyTotal > 0 ? usage.weeklyUsed / usage.weeklyTotal : 0;
+  const weeklyColor = colorForPercentage(weeklyPct);
+  statWeeklyUsed.textContent = formatNumber(usage.weeklyUsed);
+  statWeeklyUsed.style.color = weeklyColor.color;
+  statWeeklyRemains.textContent = formatNumber(usage.weeklyRemains);
+  statWeeklyRemains.style.color = 'var(--text-primary)';
+  statWeeklyTotal.textContent = formatNumber(usage.weeklyTotal);
+  weeklyResetTime.textContent = '周一零点重置';
 
   const now = new Date();
   lastUpdated.textContent = '更新于 ' + formatTime(now);
