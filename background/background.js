@@ -141,11 +141,10 @@ async function fetchUsage() {
     }
 
     // API 返回 model_remains 数组，每个模型一条记录
-    // 聚合所有模型的用量作为总用量
+    // 注意：current_interval 数据和官网不一致，改用 weekly 数据
     const models = data.model_remains || [];
-    let totalUsed = 0;
-    let totalRemains = 0;
-    let totalAll = 0;
+    let weeklyUsed = 0;
+    let weeklyTotal = 0;
 
     if (models.length > 0) {
       // 优先取 coding-plan 相关的模型（MiniMax-M* / coding-plan-*）
@@ -156,17 +155,16 @@ async function fetchUsage() {
       const targetModels = codingModels.length > 0 ? codingModels : models;
 
       targetModels.forEach(m => {
-        // current_interval_total_count 是当期总额，current_interval_usage_count 是已用
-        totalUsed += m.current_interval_usage_count || 0;
-        totalAll += m.current_interval_total_count || 0;
-        totalRemains += m.current_interval_total_count - m.current_interval_usage_count || 0;
+        // 使用 weekly 数据（更接近官网显示）
+        weeklyUsed += m.current_weekly_usage_count || 0;
+        weeklyTotal += m.current_weekly_total_count || 0;
       });
     }
 
     const usage = {
-      used: totalUsed,
-      remains: Math.max(0, totalRemains),
-      total: totalAll,
+      used: weeklyUsed,
+      remains: Math.max(0, weeklyTotal - weeklyUsed),
+      total: weeklyTotal,
       resetTime: null,
       planType: 'Coding Plan'
     };
