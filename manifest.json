@@ -5,7 +5,7 @@
   "description": "Monitor MiniMax Coding Plan token usage with beautiful UI",
   "permissions": [
     "storage",
-    "activeTab"
+    "alarms"
   ],
   "host_permissions": [
     "https://www.minimaxi.com/*",

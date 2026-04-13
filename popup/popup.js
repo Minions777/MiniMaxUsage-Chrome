@@ -2,6 +2,7 @@
 
 let currentSettings = null;
 let currentTheme = 'neon';
+let isRefreshing = false;
 
 // DOM Elements
 const loading = document.getElementById('loading');
@@ -69,6 +70,12 @@ function colorForPercentage(pct) {
   return { color: 'var(--red-color)', gradient: 'url(#redGradient)', shadow: 'rgba(255, 107, 107, 0.4)' };
 }
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 // Initialize
 async function init() {
   showLoading();
@@ -97,7 +104,9 @@ async function init() {
 
 // Refresh usage from background
 async function refreshUsageDisplay() {
-  currentSettings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+  if (!currentSettings) {
+    currentSettings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+  }
 
   if (!currentSettings.apiKey) {
     showEmpty();
@@ -141,7 +150,6 @@ function displayUsage(usage) {
   statUsed.style.color = colorInfo.color;
   statRemains.textContent = formatNumber(usage.intervalRemains);
   statRemains.style.color = 'var(--text-primary)';
-  // statTotal 固定显示 1500，无需更新
 
   // 5小时重置时间
   if (usage.intervalResetTime) {
@@ -159,7 +167,6 @@ function displayUsage(usage) {
   statWeeklyUsed.style.color = weeklyColor.color;
   statWeeklyRemains.textContent = formatNumber(usage.weeklyRemains);
   statWeeklyRemains.style.color = 'var(--text-primary)';
-  // statWeeklyTotal 固定显示 15000，无需更新
 
   const now = new Date();
   lastUpdated.textContent = '更新于 ' + formatTime(now);
@@ -168,7 +175,8 @@ function displayUsage(usage) {
   endpointLabel.textContent = currentSettings.endpoint + ' · ' + endpointName;
 
   const interval = currentSettings.autoRefreshInterval || 60;
-  refreshText.textContent = `自动刷新中 · 每 ${interval}s`;
+  const displayInterval = interval < 60 ? '60s (最小1分钟)' : `${interval}s`;
+  refreshText.textContent = `自动刷新中 · 每 ${displayInterval}`;
 
   showUsage();
 }
@@ -254,12 +262,18 @@ function applySettingsToUI(settings) {
   intervalField.style.display = toggleAutoRefresh.checked ? 'block' : 'none';
 }
 
-// Event Listeners - Header
+// Event Listeners - Header (with debounce on refresh)
 document.getElementById('btnRefresh').addEventListener('click', async () => {
+  if (isRefreshing) return;
+  isRefreshing = true;
   const btn = document.getElementById('btnRefresh');
   btn.classList.add('spinning');
-  await refreshUsageDisplay();
-  btn.classList.remove('spinning');
+  try {
+    await refreshUsageDisplay();
+  } finally {
+    btn.classList.remove('spinning');
+    isRefreshing = false;
+  }
 });
 
 document.getElementById('btnSettings').addEventListener('click', () => {
@@ -315,13 +329,15 @@ toggleAutoRefresh.addEventListener('change', () => {
   intervalField.style.display = toggleAutoRefresh.checked ? 'block' : 'none';
 });
 
+// Interval button selection
 document.querySelectorAll('.interval-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
   });
+});
 
-// Endpoint option click - toggle selection
+// Endpoint option click - toggle selection (独立于 interval-btn)
 document.querySelectorAll('#settingsPanel .endpoint-option').forEach(option => {
   option.addEventListener('click', () => {
     document.querySelectorAll('#settingsPanel .endpoint-option').forEach(opt => {
@@ -335,7 +351,6 @@ document.querySelectorAll('#settingsPanel .endpoint-option').forEach(option => {
       option.classList.add('selected');
     }
   });
-});
 });
 
 // Theme selection
@@ -387,7 +402,6 @@ async function loadLogData() {
     return;
   }
 
-  // Show newest first, limit to 100
   const recent = logs.slice(0, 100);
   logList.innerHTML = recent.map(log => {
     const time = new Date(log.timestamp);
@@ -397,19 +411,13 @@ async function loadLogData() {
     return `
       <div class="log-item">
         <div class="log-item-header">
-          <span class="log-entry-time">${timeStr}</span>
+          <span class="log-entry-time">${escapeHtml(timeStr)}</span>
           <span class="log-entry-type ${typeClass}">${typeLabel}</span>
         </div>
         <div class="log-entry-msg">${escapeHtml(log.message)}</div>
       </div>
     `;
   }).join('');
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }
 
 // Load history data
@@ -484,15 +492,15 @@ function renderWeeklyChart(days) {
     return `
       <div class="bar-col">
         <div class="bar-bar" style="height:${height}px"></div>
-        <div class="bar-date">${formatDate(day.date)}</div>
-        <div class="bar-value">${formatNumber(dailyUsed)}</div>
+        <div class="bar-date">${escapeHtml(formatDate(day.date))}</div>
+        <div class="bar-value">${escapeHtml(formatNumber(dailyUsed))}</div>
       </div>
     `;
   }).join('');
 }
 
 function renderHistoryList(days) {
-  historyList.innerHTML = days.map(day => {
+  historyList.innerHTML = days.map((day, dayIndex) => {
     let dailyUsed = 0;
     if (day.records.length >= 2) {
       dailyUsed = day.records[0].used - day.records[day.records.length - 1].used;
@@ -506,23 +514,23 @@ function renderHistoryList(days) {
       const colorInfo = colorForPercentage(pct);
       return `
         <div class="history-record">
-          <span style="color:var(--text-muted)">${formatTime(new Date(record.timestamp))}</span>
-          <span>已用 ${formatNumber(record.used)}</span>
-          <span>剩余 ${formatNumber(record.remains)}</span>
+          <span style="color:var(--text-muted)">${escapeHtml(formatTime(new Date(record.timestamp)))}</span>
+          <span>已用 ${escapeHtml(formatNumber(record.used))}</span>
+          <span>剩余 ${escapeHtml(formatNumber(record.remains))}</span>
           <span class="history-record-dot" style="background:${colorInfo.color}"></span>
         </div>
       `;
     }).join('');
 
     return `
-      <div class="history-day">
-        <div class="history-day-header" onclick="this.parentElement.querySelector('.history-day-detail').classList.toggle('show')">
+      <div class="history-day" data-day-index="${dayIndex}">
+        <div class="history-day-header">
           <div class="history-day-left">
-            <span class="history-day-weekday">${weekday}</span>
-            <span class="history-day-date">${dateStr}</span>
+            <span class="history-day-weekday">${escapeHtml(weekday)}</span>
+            <span class="history-day-date">${escapeHtml(dateStr)}</span>
           </div>
           <div class="history-day-right">
-            <span class="history-day-used">-${formatNumber(dailyUsed)}</span>
+            <span class="history-day-used">-${escapeHtml(formatNumber(dailyUsed))}</span>
             <span class="history-day-records">${day.records.length}条</span>
             <span class="history-day-expand">▶</span>
           </div>
@@ -532,6 +540,14 @@ function renderHistoryList(days) {
     `;
   }).join('');
 }
+
+// Event delegation for history day expand/collapse (替代 inline onclick)
+historyList.addEventListener('click', (e) => {
+  const header = e.target.closest('.history-day-header');
+  if (!header) return;
+  const detail = header.parentElement.querySelector('.history-day-detail');
+  if (detail) detail.classList.toggle('show');
+});
 
 // Boot
 document.addEventListener('DOMContentLoaded', init);
