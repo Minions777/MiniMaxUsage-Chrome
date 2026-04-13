@@ -23,32 +23,36 @@ const ENDPOINTS = {
   }
 };
 
-let autoRefreshTimer = null;
-
-// 获取设置
+// 获取设置（API Key 从 local 读取，其余从 sync 读取）
 async function getSettings() {
-  const result = await chrome.storage.sync.get([
-    STORAGE_KEYS.API_KEY,
-    STORAGE_KEYS.ENDPOINT,
-    STORAGE_KEYS.AUTO_REFRESH_INTERVAL,
-    STORAGE_KEYS.AUTO_REFRESH_ENABLED
+  const [syncResult, localResult] = await Promise.all([
+    chrome.storage.sync.get([
+      STORAGE_KEYS.ENDPOINT,
+      STORAGE_KEYS.AUTO_REFRESH_INTERVAL,
+      STORAGE_KEYS.AUTO_REFRESH_ENABLED
+    ]),
+    chrome.storage.local.get([STORAGE_KEYS.API_KEY])
   ]);
   return {
-    apiKey: result[STORAGE_KEYS.API_KEY] || '',
-    endpoint: result[STORAGE_KEYS.ENDPOINT] || 'china',
-    autoRefreshInterval: result[STORAGE_KEYS.AUTO_REFRESH_INTERVAL] || 60,
-    autoRefreshEnabled: result[STORAGE_KEYS.AUTO_REFRESH_ENABLED] !== false
+    apiKey: localResult[STORAGE_KEYS.API_KEY] || '',
+    endpoint: syncResult[STORAGE_KEYS.ENDPOINT] || 'china',
+    autoRefreshInterval: syncResult[STORAGE_KEYS.AUTO_REFRESH_INTERVAL] || 60,
+    autoRefreshEnabled: syncResult[STORAGE_KEYS.AUTO_REFRESH_ENABLED] !== false
   };
 }
 
-// 保存设置
+// 保存设置（API Key 存 local，其余存 sync）
 async function saveSettings(settings) {
-  await chrome.storage.sync.set({
-    [STORAGE_KEYS.API_KEY]: settings.apiKey || '',
-    [STORAGE_KEYS.ENDPOINT]: settings.endpoint || 'china',
-    [STORAGE_KEYS.AUTO_REFRESH_INTERVAL]: settings.autoRefreshInterval || 60,
-    [STORAGE_KEYS.AUTO_REFRESH_ENABLED]: settings.autoRefreshEnabled !== false
-  });
+  await Promise.all([
+    chrome.storage.sync.set({
+      [STORAGE_KEYS.ENDPOINT]: settings.endpoint || 'china',
+      [STORAGE_KEYS.AUTO_REFRESH_INTERVAL]: settings.autoRefreshInterval || 60,
+      [STORAGE_KEYS.AUTO_REFRESH_ENABLED]: settings.autoRefreshEnabled !== false
+    }),
+    chrome.storage.local.set({
+      [STORAGE_KEYS.API_KEY]: settings.apiKey || ''
+    })
+  ]);
 }
 
 // 获取历史记录
@@ -57,12 +61,27 @@ async function getHistory() {
   return result[STORAGE_KEYS.HISTORY] || [];
 }
 
-// 保存历史记录
+// 保存历史记录（30 天过期 + 每天最多 24 条）
 async function saveHistory(history) {
-  // 最多保留 30 天，每天最多 24 条
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const filtered = history.filter(r => r.timestamp > cutoff);
-  await chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: filtered });
+  const fresh = history.filter(r => r.timestamp > cutoff);
+
+  // 每天最多保留 24 条：按天分组，每组只留最新 24 条
+  const grouped = {};
+  fresh.forEach(r => {
+    const dayKey = new Date(r.timestamp).toDateString();
+    if (!grouped[dayKey]) grouped[dayKey] = [];
+    grouped[dayKey].push(r);
+  });
+
+  const limited = [];
+  Object.values(grouped).forEach(dayRecords => {
+    dayRecords.sort((a, b) => b.timestamp - a.timestamp);
+    limited.push(...dayRecords.slice(0, 24));
+  });
+  limited.sort((a, b) => b.timestamp - a.timestamp);
+
+  await chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: limited });
 }
 
 // 添加历史记录
@@ -85,7 +104,6 @@ async function getLogs() {
 }
 
 async function saveLogs(logs) {
-  // 最多保留 200 条
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const filtered = logs.filter(r => r.timestamp > cutoff).slice(-200);
   await chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: filtered });
@@ -133,29 +151,24 @@ async function fetchUsage() {
 
     const data = await response.json();
 
-    // 支持两种响应格式：1) { base_resp: { status_code: 0 } } 2) { code: 0 }
     const statusCode = data.base_resp?.status_code ?? data.code;
     const statusMsg = data.base_resp?.status_msg ?? data.msg;
     if (statusCode !== 0) {
       throw new Error(statusMsg || 'API Error');
     }
 
-    // API 返回 model_remains 数组，每个模型一条记录
     const models = data.model_remains || [];
 
     if (models.length === 0) {
       throw new Error('无模型数据');
     }
 
-    // 优先取 coding-plan 相关的模型（MiniMax-M* / coding-plan-*）
     const codingModels = models.filter(m =>
       m.model_name?.includes('MiniMax-M') ||
       m.model_name?.includes('coding-plan')
     );
     const targetModels = codingModels.length > 0 ? codingModels : models;
 
-    // 聚合用量（注意：官网公式 = total - usage_count，remaining = usage_count）
-    // 例如 MiniMax-M*: total=1500, usage_count=1373 → 已用=127, 剩余=1373
     let totalUsed = 0;
     let totalRemains = 0;
     let totalAll = 0;
@@ -163,22 +176,19 @@ async function fetchUsage() {
     targetModels.forEach(m => {
       const intervalTotal = m.current_interval_total_count || 0;
       const intervalUsed = m.current_interval_usage_count || 0;
-      totalUsed += intervalTotal - intervalUsed;  // total - usage_count = 已用
-      totalRemains += intervalUsed;                 // usage_count = 剩余
+      totalUsed += intervalTotal - intervalUsed;
+      totalRemains += intervalUsed;
       totalAll += intervalTotal;
     });
 
     const usage = {
-      // 5小时滚动窗口
       intervalUsed: totalUsed,
       intervalRemains: totalRemains,
       intervalTotal: totalAll,
       intervalResetTime: targetModels[0]?.remains_time || null,
-      // 本周用量
       weeklyUsed: targetModels.reduce((s, m) => s + (m.current_weekly_total_count - m.current_weekly_usage_count), 0),
       weeklyRemains: targetModels.reduce((s, m) => s + (m.current_weekly_usage_count || 0), 0),
       weeklyTotal: targetModels.reduce((s, m) => s + (m.current_weekly_total_count || 0), 0),
-      // 兼容旧字段
       used: totalUsed,
       remains: totalRemains,
       total: totalAll,
@@ -186,16 +196,9 @@ async function fetchUsage() {
       planType: 'Coding Plan'
     };
 
-    // 保存最新用量
     await chrome.storage.local.set({ [STORAGE_KEYS.LAST_USAGE]: usage });
-
-    // 添加历史记录
     await addHistoryRecord(usage);
-
-    // 记录成功日志
     await addLog('success', `获取用量成功 — 已用 ${usage.used} / 总计 ${usage.total}`);
-
-    // 更新 badge
     updateBadge(usage);
 
     return usage;
@@ -223,26 +226,28 @@ function updateBadge(usage) {
   }
 }
 
-// 启动自动刷新
+// 自动刷新：使用 chrome.alarms（MV3 持久化，最小间隔 1 分钟）
 async function startAutoRefresh() {
-  stopAutoRefresh();
+  await chrome.alarms.clear('autoRefresh');
   const settings = await getSettings();
   if (!settings.autoRefreshEnabled || !settings.apiKey) return;
 
-  autoRefreshTimer = setInterval(async () => {
-    await fetchUsage();
-    // 通知所有 popup 刷新
-    chrome.runtime.sendMessage({ type: 'USAGE_UPDATED' });
-  }, settings.autoRefreshInterval * 1000);
+  // chrome.alarms 最小间隔 1 分钟，小于 60s 的设置向上取整
+  const periodInMinutes = Math.max(1, settings.autoRefreshInterval / 60);
+  chrome.alarms.create('autoRefresh', { periodInMinutes });
 }
 
-// 停止自动刷新
-function stopAutoRefresh() {
-  if (autoRefreshTimer) {
-    clearInterval(autoRefreshTimer);
-    autoRefreshTimer = null;
-  }
+async function stopAutoRefresh() {
+  await chrome.alarms.clear('autoRefresh');
 }
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'autoRefresh') {
+    await fetchUsage();
+    // 通知 popup 刷新（popup 未打开时会静默失败）
+    chrome.runtime.sendMessage({ type: 'USAGE_UPDATED' }).catch(() => {});
+  }
+});
 
 // 监听消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -282,9 +287,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   await addLog('info', 'MiniMax Token Monitor 已启动');
   const settings = await getSettings();
   if (settings.apiKey) {
-    // 首次获取用量
-    const usage = await fetchUsage();
-    // 启动自动刷新
+    await fetchUsage();
     await startAutoRefresh();
   } else {
     await addLog('warn', '未配置 API Key，请先在设置中配置');
