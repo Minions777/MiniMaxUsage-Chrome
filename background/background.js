@@ -14,12 +14,16 @@ const ENDPOINTS = {
   china: {
     name: '🇨🇳 China',
     baseURL: 'https://www.minimaxi.com',
-    remainsPath: '/v1/api/openplatform/coding_plan/remains'
+    remainsPath: '/v1/api/openplatform/coding_plan/remains',
+    subscriptionPath: '/v1/api/openplatform/charge/combo/cycle_audio_resource_package?biz_line=2&cycle_type=1&resource_package_type=7',
+    billingPath: '/account/amount'
   },
   international: {
     name: '🌏 International',
     baseURL: 'https://api.minimax.io',
-    remainsPath: '/v1/api/openplatform/coding_plan/remains'
+    remainsPath: '/v1/api/openplatform/coding_plan/remains',
+    subscriptionPath: '/v1/api/openplatform/charge/combo/cycle_audio_resource_package?biz_line=2&cycle_type=1&resource_package_type=7',
+    billingPath: '/account/amount'
   }
 };
 
@@ -66,7 +70,6 @@ async function saveHistory(history) {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const fresh = history.filter(r => r.timestamp > cutoff);
 
-  // 每天最多保留 24 条：按天分组，每组只留最新 24 条
   const grouped = {};
   fresh.forEach(r => {
     const dayKey = new Date(r.timestamp).toDateString();
@@ -90,9 +93,9 @@ async function addHistoryRecord(usage) {
   history.unshift({
     id: Date.now().toString(),
     timestamp: Date.now(),
-    used: usage.used,
-    remains: usage.remains,
-    total: usage.total
+    used: usage.intervalUsed,
+    remains: usage.intervalRemains,
+    total: usage.intervalTotal
   });
   await saveHistory(history);
 }
@@ -120,9 +123,125 @@ async function addLog(type, message) {
   await saveLogs(logs);
 }
 
+// 获取订阅信息
+async function fetchSubscription(apiKey, endpoint) {
+  try {
+    const url = endpoint.baseURL + endpoint.subscriptionPath;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return data.current_subscribe || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// 获取所有账单记录（分页获取最多30天）
+async function fetchAllBillingRecords(apiKey, endpoint) {
+  const allRecords = [];
+  let page = 1;
+  const limit = 100;
+  const minStartTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  while (true) {
+    try {
+      const url = `${endpoint.baseURL}${endpoint.billingPath}?page=${page}&limit=${limit}&aggregate=false`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) break;
+
+      const data = await response.json();
+      const records = data.charge_records || [];
+
+      if (records.length === 0) break;
+
+      for (const r of records) {
+        const ts = r.created_at * 1000;
+        if (minStartTime && ts < minStartTime) return allRecords;
+        allRecords.push(r);
+      }
+
+      if (records.length < limit) break;
+      page++;
+    } catch {
+      break;
+    }
+  }
+
+  return allRecords;
+}
+
+// 计算 Token 消耗统计
+function calculateTokenStats(records) {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const sevenDaysAgo = now.getTime() - 7 * 86400000;
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  let yesterdayTokens = 0;
+  let sevenDayTokens = 0;
+  let monthTokens = 0;
+
+  for (const r of records) {
+    const ts = r.created_at * 1000;
+    const token = Number(r.consume_token);
+
+    if (ts >= todayStart - 86400000 && ts < todayStart) {
+      yesterdayTokens += token;
+    }
+    if (ts >= sevenDaysAgo) {
+      sevenDayTokens += token;
+    }
+    if (ts >= monthStart) {
+      monthTokens += token;
+    }
+  }
+
+  return { yesterdayTokens, sevenDayTokens, monthTokens };
+}
+
+// 计算距离天数
+function daysUntil(date) {
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86400000));
+}
+
+// 格式化重置倒计时
+function formatResetCountdown(resetTime) {
+  if (!resetTime) return '--';
+
+  const diff = resetTime.getTime() - Date.now();
+  if (diff <= 0) return '即将重置';
+
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+
+  if (h > 0) {
+    return m > 0 ? `${h} 小时 ${m} 分钟后重置` : `${h} 小时后重置`;
+  }
+  return `${m} 分钟后重置`;
+}
+
 // 获取最新用量
 async function fetchUsage() {
   const settings = await getSettings();
+
   if (!settings.apiKey) {
     return { error: 'NO_API_KEY' };
   }
@@ -163,47 +282,91 @@ async function fetchUsage() {
       throw new Error('无模型数据');
     }
 
-    const codingModels = models.filter(m =>
-      m.model_name?.includes('MiniMax-M') ||
-      m.model_name?.includes('coding-plan')
-    );
-    const targetModels = codingModels.length > 0 ? codingModels : models;
+    // 分离主模型（MiniMax-M*）和其他模型
+    const mainModel = models.find(m => m.model_name?.startsWith('MiniMax-M'))
+      || models.find(m => m.current_interval_total_count > 0)
+      || models[0];
 
-    let totalUsed = 0;
-    let totalRemains = 0;
-    let totalAll = 0;
+    // 计算 5小时窗口配额
+    const intervalTotal = mainModel.current_interval_total_count || 0;
+    const intervalUsage = mainModel.current_interval_usage_count || 0;
+    const intervalUsed = intervalTotal - intervalUsage;
+    const intervalRemains = intervalUsage;
 
-    targetModels.forEach(m => {
-      const intervalTotal = m.current_interval_total_count || 0;
-      const intervalUsed = m.current_interval_usage_count || 0;
-      totalUsed += intervalTotal - intervalUsed;
-      totalRemains += intervalUsed;
-      totalAll += intervalTotal;
-    });
+    // 计算周限额
+    const weeklyTotal = mainModel.current_weekly_total_count || 0;
+    const weeklyUsage = mainModel.current_weekly_usage_count || 0;
+    const weeklyUsed = weeklyTotal - weeklyUsage;
+    const weeklyRemains = weeklyUsage;
+
+    // 获取订阅信息和 Token 消耗统计（并行请求）
+    let subscription = null;
+    let billingRecords = [];
+
+    try {
+      const results = await Promise.allSettled([
+        fetchSubscription(settings.apiKey, endpoint),
+        fetchAllBillingRecords(settings.apiKey, endpoint)
+      ]);
+
+      if (results[0].status === 'fulfilled' && results[0].value) {
+        subscription = results[0].value;
+      }
+
+      if (results[1].status === 'fulfilled') {
+        billingRecords = results[1].value;
+      }
+    } catch {
+      // 静默失败，不影响主要功能
+    }
+
+    const tokenStats = calculateTokenStats(billingRecords);
 
     const usage = {
-      intervalUsed: totalUsed,
-      intervalRemains: totalRemains,
-      intervalTotal: totalAll,
-      intervalResetTime: targetModels[0]?.remains_time || null,
-      weeklyUsed: targetModels.reduce((s, m) => s + (m.current_weekly_total_count - m.current_weekly_usage_count), 0),
-      weeklyRemains: targetModels.reduce((s, m) => s + (m.current_weekly_usage_count || 0), 0),
-      weeklyTotal: targetModels.reduce((s, m) => s + (m.current_weekly_total_count || 0), 0),
-      used: totalUsed,
-      remains: totalRemains,
-      total: totalAll,
-      resetTime: targetModels[0]?.remains_time || null,
-      planType: 'Coding Plan'
+      // 5小时窗口配额
+      intervalUsed,
+      intervalRemains,
+      intervalTotal,
+      intervalResetTime: mainModel.remains_time || null,
+
+      // 周限额
+      weeklyUsed,
+      weeklyRemains,
+      weeklyTotal,
+
+      // 兼容旧字段
+      used: intervalUsed,
+      remains: intervalRemains,
+      total: intervalTotal,
+      resetTime: mainModel.remains_time || null,
+      planType: 'Coding Plan',
+
+      // Token 消耗统计
+      tokenStats: {
+        yesterday: tokenStats.yesterdayTokens,
+        sevenDay: tokenStats.sevenDayTokens,
+        month: tokenStats.monthTokens
+      },
+
+      // 订阅信息
+      subscription: subscription ? {
+        endTime: subscription.current_subscribe_end_time,
+        creditReloadTime: subscription.current_credit_reload_time,
+        daysUntilEnd: daysUntil(new Date(subscription.current_subscribe_end_time))
+      } : null,
+
+      // 格式化后的重置时间字符串
+      intervalResetTimeStr: formatResetCountdown(new Date(mainModel.remains_time))
     };
 
     await chrome.storage.local.set({ [STORAGE_KEYS.LAST_USAGE]: usage });
     await addHistoryRecord(usage);
-    await addLog('success', `获取用量成功 — 已用 ${usage.used} / 总计 ${usage.total}`);
+    await addLog('success', `获取用量成功 — 已用 ${intervalUsed} / 总计 ${intervalTotal}`);
     updateBadge(usage);
 
     return usage;
   } catch (error) {
-    await addLog('error', `API 请求失败: ${error.message}`);
+    await addLog('error', `获取用量失败: ${error.message}`);
     return { error: error.message || 'NETWORK_ERROR' };
   }
 }
@@ -214,7 +377,7 @@ function updateBadge(usage) {
     chrome.action.setBadgeText({ text: '!' });
     chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
   } else {
-    const pct = usage.total > 0 ? Math.round((usage.used / usage.total) * 100) : 0;
+    const pct = usage.intervalTotal > 0 ? Math.round((usage.intervalUsed / usage.intervalTotal) * 100) : 0;
     chrome.action.setBadgeText({ text: pct + '%' });
     if (pct < 50) {
       chrome.action.setBadgeBackgroundColor({ color: '#00d09c' });
@@ -232,7 +395,6 @@ async function startAutoRefresh() {
   const settings = await getSettings();
   if (!settings.autoRefreshEnabled || !settings.apiKey) return;
 
-  // chrome.alarms 最小间隔 1 分钟，小于 60s 的设置向上取整
   const periodInMinutes = Math.max(1, settings.autoRefreshInterval / 60);
   chrome.alarms.create('autoRefresh', { periodInMinutes });
 }
@@ -244,16 +406,22 @@ async function stopAutoRefresh() {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'autoRefresh') {
     await fetchUsage();
-    // 通知 popup 刷新（popup 未打开时会静默失败）
     chrome.runtime.sendMessage({ type: 'USAGE_UPDATED' }).catch(() => {});
   }
 });
 
 // 监听消息
+// 获取缓存的用量数据
+async function getCachedUsage() {
+  const result = await chrome.storage.local.get(STORAGE_KEYS.LAST_USAGE);
+  return result[STORAGE_KEYS.LAST_USAGE] || null;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'GET_USAGE':
-      fetchUsage().then(sendResponse);
+      // 返回缓存数据，不主动刷新
+      getCachedUsage().then(sendResponse);
       return true;
     case 'GET_SETTINGS':
       getSettings().then(sendResponse);
@@ -284,12 +452,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // 初始化
 (async () => {
-  await addLog('info', 'MiniMax Token Monitor 已启动');
   const settings = await getSettings();
   if (settings.apiKey) {
     await fetchUsage();
     await startAutoRefresh();
-  } else {
-    await addLog('warn', '未配置 API Key，请先在设置中配置');
   }
 })();

@@ -17,6 +17,11 @@
       <span>加载中...</span>
     </div>
 
+    <!-- Refresh Overlay -->
+    <div class="refresh-overlay" id="refreshOverlay" style="display:none">
+      <div class="spinner"></div>
+    </div>
+
     <!-- Main Content -->
     <div class="main-content" id="mainContent" style="display:none">
       <!-- Header -->
@@ -111,7 +116,7 @@
               </div>
               <div class="stat-sep"></div>
               <div class="stat-item">
-                <div class="stat-value" id="statTotal">1500</div>
+                <div class="stat-value" id="statTotal">--</div>
                 <div class="stat-label">总额</div>
               </div>
             </div>
@@ -134,9 +139,39 @@
               </div>
               <div class="stat-sep"></div>
               <div class="stat-item">
-                <div class="stat-value" id="statWeeklyTotal">15000</div>
+                <div class="stat-value" id="statWeeklyTotal">--</div>
                 <div class="stat-label">总额</div>
               </div>
+            </div>
+          </div>
+          <!-- Token消耗 -->
+          <div class="stats-group">
+            <div class="stats-label">
+              <span>📊 Token消耗统计</span>
+            </div>
+            <div class="token-stats-row">
+              <div class="token-stat-item">
+                <div class="token-stat-label">昨日</div>
+                <div class="token-stat-value" id="statYesterday">--</div>
+              </div>
+              <div class="token-stat-item">
+                <div class="token-stat-label">近7天</div>
+                <div class="token-stat-value" id="statSevenDay">--</div>
+              </div>
+              <div class="token-stat-item">
+                <div class="token-stat-label">当月</div>
+                <div class="token-stat-value" id="statMonth">--</div>
+              </div>
+            </div>
+          </div>
+          <!-- 订阅到期 -->
+          <div class="stats-group subscription-group" id="subscriptionGroup" style="display:none">
+            <div class="stats-label">
+              <span>⏳ 订阅到期</span>
+            </div>
+            <div class="subscription-row">
+              <span id="subscriptionDays">--</span>
+              <span class="subscription-label">天后</span>
             </div>
           </div>
         </div>

@@ -14,6 +14,7 @@ const settingsPanel = document.getElementById('settingsPanel');
 const historyPanel = document.getElementById('historyPanel');
 const logPanel = document.getElementById('logPanel');
 const logList = document.getElementById('logList');
+const refreshOverlay = document.getElementById('refreshOverlay');
 
 // Ring elements
 const ringProgress = document.getElementById('ringProgress');
@@ -31,6 +32,15 @@ const endpointLabel = document.getElementById('endpointLabel');
 const refreshIndicator = document.getElementById('refreshIndicator');
 const refreshText = document.getElementById('refreshText');
 const errorMessage = document.getElementById('errorMessage');
+
+// Token stats elements
+const statYesterday = document.getElementById('statYesterday');
+const statSevenDay = document.getElementById('statSevenDay');
+const statMonth = document.getElementById('statMonth');
+
+// Subscription elements
+const subscriptionGroup = document.getElementById('subscriptionGroup');
+const subscriptionDays = document.getElementById('subscriptionDays');
 
 // Settings elements
 const inputAPIKey = document.getElementById('inputAPIKey');
@@ -96,8 +106,15 @@ async function init() {
   currentSettings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
   applySettingsToUI(currentSettings);
 
-  // Load and display usage
-  await refreshUsageDisplay();
+  // Load cached usage data (don't fetch on open)
+  const cached = await chrome.runtime.sendMessage({ type: 'GET_USAGE' });
+  if (cached && !cached.error) {
+    displayUsage(cached);
+  } else if (cached?.error === 'NO_API_KEY') {
+    showEmpty();
+    showMain();
+    return;
+  }
 
   showMain();
 }
@@ -129,9 +146,9 @@ async function refreshUsageDisplay() {
 
 // Display usage data
 function displayUsage(usage) {
-  // Ring — 基于5小时窗口的百分比（固定总额1500）
-  const totalFixed = 1500;
-  const pct = totalFixed > 0 ? usage.intervalUsed / totalFixed : 0;
+  // Ring — 基于5小时窗口的百分比
+  const total = usage.intervalTotal || 1;
+  const pct = total > 0 ? usage.intervalUsed / total : 0;
   const circumference = 2 * Math.PI * 85;
   const offset = circumference * (1 - pct);
 
@@ -149,24 +166,37 @@ function displayUsage(usage) {
   statUsed.textContent = formatNumber(usage.intervalUsed);
   statUsed.style.color = colorInfo.color;
   statRemains.textContent = formatNumber(usage.intervalRemains);
-  statRemains.style.color = 'var(--text-primary)';
+  statTotal.textContent = formatNumber(total);
 
-  // 5小时重置时间
-  if (usage.intervalResetTime) {
-    const h = Math.floor(usage.intervalResetTime / 3600000);
-    const m = Math.floor((usage.intervalResetTime % 3600000) / 60000);
-    intervalResetTime.textContent = h > 0 ? `${h}小时${m}分后重置` : `${m}分后重置`;
-  } else {
-    intervalResetTime.textContent = '--';
-  }
+  // 5小时重置时间 - 使用后端预格式化的字符串
+  intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
 
-  // 本周数据（固定总额15000）
+  // 本周数据
   const weeklyPct = usage.weeklyTotal > 0 ? usage.weeklyUsed / usage.weeklyTotal : 0;
   const weeklyColor = colorForPercentage(weeklyPct);
   statWeeklyUsed.textContent = formatNumber(usage.weeklyUsed);
   statWeeklyUsed.style.color = weeklyColor.color;
   statWeeklyRemains.textContent = formatNumber(usage.weeklyRemains);
-  statWeeklyRemains.style.color = 'var(--text-primary)';
+  statWeeklyTotal.textContent = formatNumber(usage.weeklyTotal || 0);
+
+  // Token 消耗统计
+  if (usage.tokenStats) {
+    statYesterday.textContent = formatTokensCN(usage.tokenStats.yesterday);
+    statSevenDay.textContent = formatTokensCN(usage.tokenStats.sevenDay);
+    statMonth.textContent = formatTokensCN(usage.tokenStats.month);
+  } else {
+    statYesterday.textContent = '--';
+    statSevenDay.textContent = '--';
+    statMonth.textContent = '--';
+  }
+
+  // 订阅到期
+  if (usage.subscription && usage.subscription.daysUntilEnd != null && usage.subscription.daysUntilEnd > 0) {
+    subscriptionGroup.style.display = 'flex';
+    subscriptionDays.textContent = usage.subscription.daysUntilEnd;
+  } else {
+    subscriptionGroup.style.display = 'none';
+  }
 
   const now = new Date();
   lastUpdated.textContent = '更新于 ' + formatTime(now);
@@ -179,6 +209,13 @@ function displayUsage(usage) {
   refreshText.textContent = `自动刷新中 · 每 ${displayInterval}`;
 
   showUsage();
+}
+
+// 格式化 Token 数字为中文显示
+function formatTokensCN(tokens) {
+  if (tokens >= 100000000) return `${(tokens / 100000000).toFixed(1)}亿`;
+  if (tokens >= 10000) return `${(tokens / 10000).toFixed(1)}万`;
+  return tokens.toString();
 }
 
 // UI State Management
@@ -268,11 +305,20 @@ document.getElementById('btnRefresh').addEventListener('click', async () => {
   isRefreshing = true;
   const btn = document.getElementById('btnRefresh');
   btn.classList.add('spinning');
+
+  // 显示加载中覆盖层
+  if (refreshOverlay) {
+    refreshOverlay.style.display = 'flex';
+  }
+
   try {
     await refreshUsageDisplay();
   } finally {
     btn.classList.remove('spinning');
     isRefreshing = false;
+    if (refreshOverlay) {
+      refreshOverlay.style.display = 'none';
+    }
   }
 });
 
