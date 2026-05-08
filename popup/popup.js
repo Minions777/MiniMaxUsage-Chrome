@@ -23,7 +23,6 @@ const statUsed = document.getElementById('statUsed');
 const statRemains = document.getElementById('statRemains');
 const statTotal = document.getElementById('statTotal');
 const intervalResetTime = document.getElementById('intervalResetTime');
-const weeklyResetTime = document.getElementById('weeklyResetTime');
 const statWeeklyUsed = document.getElementById('statWeeklyUsed');
 const statWeeklyRemains = document.getElementById('statWeeklyRemains');
 const statWeeklyTotal = document.getElementById('statWeeklyTotal');
@@ -130,7 +129,18 @@ async function refreshUsageDisplay() {
     return;
   }
 
-  const result = await chrome.runtime.sendMessage({ type: 'GET_USAGE' });
+  let result;
+  try {
+    result = await chrome.runtime.sendMessage({ type: 'GET_USAGE' });
+  } catch (e) {
+    showError('获取用量失败，请稍后重试');
+    return;
+  }
+
+  if (!result) {
+    showError('获取用量失败，请稍后重试');
+    return;
+  }
 
   if (result.error) {
     if (result.error === 'NO_API_KEY') {
@@ -146,38 +156,48 @@ async function refreshUsageDisplay() {
 
 // Display usage data
 function displayUsage(usage) {
-  // Ring — 基于5小时窗口的百分比
+  // 5小时 Ring
   const total = usage.intervalTotal || 1;
   const pct = total > 0 ? usage.intervalUsed / total : 0;
-  const circumference = 2 * Math.PI * 85;
+  const circumference = 2 * Math.PI * 50;
   const offset = circumference * (1 - pct);
 
   ringProgress.style.strokeDasharray = circumference;
   ringProgress.style.strokeDashoffset = offset;
   const colorInfo = colorForPercentage(pct);
   ringProgress.style.stroke = colorInfo.gradient;
-  ringProgress.style.filter = `drop-shadow(0 0 8px ${colorInfo.shadow})`;
+  ringProgress.style.filter = `drop-shadow(0 0 6px ${colorInfo.shadow})`;
 
   ringPercent.textContent = Math.round(pct * 100) + '%';
   ringPercent.style.color = colorInfo.color;
-  ringPercent.style.textShadow = `0 0 20px ${colorInfo.shadow}`;
+  ringPercent.style.textShadow = `0 0 10px ${colorInfo.shadow}`;
 
-  // 5小时数据
   statUsed.textContent = formatNumber(usage.intervalUsed);
-  statUsed.style.color = colorInfo.color;
-  statRemains.textContent = formatNumber(usage.intervalRemains);
   statTotal.textContent = formatNumber(total);
 
-  // 5小时重置时间 - 使用后端预格式化的字符串
-  intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
+  // 本周 Ring
+  const weeklyTotal = usage.weeklyTotal || 1;
+  const weeklyPct = weeklyTotal > 0 ? usage.weeklyUsed / weeklyTotal : 0;
+  const weeklyCircumference = 2 * Math.PI * 50;
+  const weeklyOffset = weeklyCircumference * (1 - weeklyPct);
+  const weeklyRing = document.getElementById('weeklyRingProgress');
+  const weeklyColorInfo = colorForPercentage(weeklyPct);
 
-  // 本周数据
-  const weeklyPct = usage.weeklyTotal > 0 ? usage.weeklyUsed / usage.weeklyTotal : 0;
-  const weeklyColor = colorForPercentage(weeklyPct);
-  statWeeklyUsed.textContent = formatNumber(usage.weeklyUsed);
-  statWeeklyUsed.style.color = weeklyColor.color;
-  statWeeklyRemains.textContent = formatNumber(usage.weeklyRemains);
-  statWeeklyTotal.textContent = formatNumber(usage.weeklyTotal || 0);
+  weeklyRing.style.strokeDasharray = weeklyCircumference;
+  weeklyRing.style.strokeDashoffset = weeklyOffset;
+  weeklyRing.style.stroke = weeklyColorInfo.gradient;
+  weeklyRing.style.filter = `drop-shadow(0 0 6px ${weeklyColorInfo.shadow})`;
+
+  document.getElementById('weeklyRingPercent').textContent = Math.round(weeklyPct * 100) + '%';
+  document.getElementById('weeklyRingPercent').style.color = weeklyColorInfo.color;
+  document.getElementById('weeklyRingPercent').style.textShadow = `0 0 10px ${weeklyColorInfo.shadow}`;
+
+  document.getElementById('statWeeklyUsed').textContent = formatNumber(usage.weeklyUsed);
+  document.getElementById('statWeeklyTotal').textContent = formatNumber(weeklyTotal);
+
+  // 重置时间和本周剩余
+  intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
+  document.getElementById('statWeeklyRemains').textContent = formatNumber(usage.weeklyRemains);
 
   // Token 消耗统计
   if (usage.tokenStats) {
@@ -231,6 +251,7 @@ function showMain() {
   mainContent.style.display = 'flex';
   settingsPanel.style.display = 'none';
   historyPanel.style.display = 'none';
+  logPanel.style.display = 'none';
 }
 
 function showEmpty() {
