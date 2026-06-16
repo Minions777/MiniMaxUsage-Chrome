@@ -5,11 +5,19 @@ const STORAGE_KEYS = {
   ENDPOINT: 'minimax_endpoint',
   AUTO_REFRESH_INTERVAL: 'minimax_auto_refresh_interval',
   AUTO_REFRESH_ENABLED: 'minimax_auto_refresh_enabled',
+  NOTIFICATIONS_ENABLED: 'minimax_notifications_enabled',
+  NOTIFY_THRESHOLD: 'minimax_notify_threshold',
+  NOTIFIED_WINDOW_KEYS: 'minimax_notified_window_keys',
   HISTORY: 'minimax_usage_history',
   LAST_USAGE: 'minimax_last_usage',
   LAST_FETCH_AT: 'minimax_last_fetch_at',
   LOGS: 'minimax_logs'
 };
+
+// 桌面通知默认阈值 (剩余% 低于此值时弹通知)
+const DEFAULT_NOTIFY_THRESHOLD = 10;
+// 通知去重保留的最近窗口 key 数量 (5h 窗口约每 5h 一次重置)
+const NOTIFIED_KEYS_LIMIT = 10;
 
 // 主用量刷新节流窗口 (毫秒)。SW 启动/alarms 触发时若距上次 fetch
 // 不足此间隔则直接返回缓存，避免免费多打 API。
@@ -42,7 +50,9 @@ async function getSettings() {
     chrome.storage.sync.get([
       STORAGE_KEYS.ENDPOINT,
       STORAGE_KEYS.AUTO_REFRESH_INTERVAL,
-      STORAGE_KEYS.AUTO_REFRESH_ENABLED
+      STORAGE_KEYS.AUTO_REFRESH_ENABLED,
+      STORAGE_KEYS.NOTIFICATIONS_ENABLED,
+      STORAGE_KEYS.NOTIFY_THRESHOLD
     ]),
     chrome.storage.local.get([STORAGE_KEYS.API_KEY])
   ]);
@@ -50,7 +60,9 @@ async function getSettings() {
     apiKey: localResult[STORAGE_KEYS.API_KEY] || '',
     endpoint: syncResult[STORAGE_KEYS.ENDPOINT] || 'china',
     autoRefreshInterval: syncResult[STORAGE_KEYS.AUTO_REFRESH_INTERVAL] || 60,
-    autoRefreshEnabled: syncResult[STORAGE_KEYS.AUTO_REFRESH_ENABLED] !== false
+    autoRefreshEnabled: syncResult[STORAGE_KEYS.AUTO_REFRESH_ENABLED] !== false,
+    notificationsEnabled: syncResult[STORAGE_KEYS.NOTIFICATIONS_ENABLED] !== false,
+    notifyThreshold: syncResult[STORAGE_KEYS.NOTIFY_THRESHOLD] ?? DEFAULT_NOTIFY_THRESHOLD,
   };
 }
 
@@ -60,7 +72,9 @@ async function saveSettings(settings) {
     chrome.storage.sync.set({
       [STORAGE_KEYS.ENDPOINT]: settings.endpoint || 'china',
       [STORAGE_KEYS.AUTO_REFRESH_INTERVAL]: settings.autoRefreshInterval || 60,
-      [STORAGE_KEYS.AUTO_REFRESH_ENABLED]: settings.autoRefreshEnabled !== false
+      [STORAGE_KEYS.AUTO_REFRESH_ENABLED]: settings.autoRefreshEnabled !== false,
+      [STORAGE_KEYS.NOTIFICATIONS_ENABLED]: settings.notificationsEnabled !== false,
+      [STORAGE_KEYS.NOTIFY_THRESHOLD]: settings.notifyThreshold ?? DEFAULT_NOTIFY_THRESHOLD,
     }),
     chrome.storage.local.set({
       [STORAGE_KEYS.API_KEY]: settings.apiKey || ''
@@ -435,6 +449,7 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
     await addHistoryRecord(usage);
     await addLog('success', `获取用量成功 — 剩余 ${intervalRemains} / 总计 ${intervalTotal} (${intervalRemainingPercent ?? '--'}%)`);
     updateBadge(usage);
+    await maybeNotifyLowUsage(usage);
 
     return usage;
   } catch (error) {
@@ -463,6 +478,51 @@ function updateBadge(usage) {
     } else {
       chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
     }
+  }
+}
+
+// 桌面通知：当剩余% 低于阈值时弹通知。
+// 同窗口 (intervalResetTime) 内只通知一次，避免每分钟自动刷新时刷屏。
+// 注意：chrome.notifications 需要 user gesture 或在回调内首次调用
+// 才能获得 permission。这里假设用户已安装扩展即隐式授权 (manifest
+// 声明 notifications 权限)。若运行时报 not allowed 则静默失败。
+async function maybeNotifyLowUsage(usage) {
+  try {
+    const { [STORAGE_KEYS.NOTIFICATIONS_ENABLED]: notifEnabled,
+            [STORAGE_KEYS.NOTIFY_THRESHOLD]: threshold,
+            [STORAGE_KEYS.NOTIFIED_WINDOW_KEYS]: notifiedRaw = [] } =
+      await chrome.storage.sync.get([
+        STORAGE_KEYS.NOTIFICATIONS_ENABLED,
+        STORAGE_KEYS.NOTIFY_THRESHOLD,
+        STORAGE_KEYS.NOTIFIED_WINDOW_KEYS
+      ]);
+
+    // 默认开启通知
+    if (notifEnabled === false) return;
+
+    const remainingPct = usage.intervalRemainingPercent ?? (
+      usage.intervalTotal > 0 ? Math.round((usage.intervalRemains / usage.intervalTotal) * 100) : 0
+    );
+    const limit = typeof threshold === 'number' ? threshold : DEFAULT_NOTIFY_THRESHOLD;
+    if (remainingPct > limit) return;
+
+    const windowKey = usage.intervalResetTime || String(usage.intervalRemains);
+    const notified = Array.isArray(notifiedRaw) ? notifiedRaw : [];
+    if (notified.includes(windowKey)) return;  // 同窗口已通知过
+
+    await chrome.notifications.create(`low-usage-${windowKey}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: '用量提醒',
+      message: `5 小时配额剩余 ${remainingPct}%，请注意用量`,
+      priority: 2,
+    });
+
+    const updatedNotified = [...notified, windowKey].slice(-NOTIFIED_KEYS_LIMIT);
+    await chrome.storage.sync.set({ [STORAGE_KEYS.NOTIFIED_WINDOW_KEYS]: updatedNotified });
+  } catch (e) {
+    // notifications 权限未授予等异常 — 静默失败，不影响主流程
+    await addLog('warn', `通知发送失败: ${e.message}`);
   }
 }
 

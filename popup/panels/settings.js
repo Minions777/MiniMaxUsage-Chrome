@@ -11,6 +11,8 @@
     initDom();
     dom.inputAPIKey.value = settings.apiKey || '';
     dom.toggleAutoRefresh.checked = settings.autoRefreshEnabled !== false;
+    dom.toggleNotifications.checked = settings.notificationsEnabled !== false;
+    dom.inputNotifyThreshold.value = settings.notifyThreshold ?? 10;
 
     document.querySelectorAll('input[name="endpoint"]').forEach(radio => {
       radio.checked = radio.value === (settings.endpoint || 'china');
@@ -26,11 +28,14 @@
 
   async function save() {
     initDom();
+    const threshold = parseInt(dom.inputNotifyThreshold.value, 10);
     const settings = {
       apiKey: dom.inputAPIKey.value.trim(),
       endpoint: document.querySelector('input[name="endpoint"]:checked')?.value ?? 'china',
       autoRefreshEnabled: dom.toggleAutoRefresh.checked,
       autoRefreshInterval: parseInt(document.querySelector('.interval-btn.active')?.dataset.value || '60'),
+      notificationsEnabled: dom.toggleNotifications.checked,
+      notifyThreshold: Number.isFinite(threshold) ? Math.max(1, Math.min(50, threshold)) : 10,
     };
     await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings });
     state.currentSettings = settings;

@@ -270,6 +270,12 @@ body::before {
 .toggle input:checked + .toggle-slider { background: linear-gradient(135deg, var(--accent), var(--ring-end)); box-shadow: 0 0 12px var(--accent-glow); }
 .toggle input:checked + .toggle-slider::before { transform: translateX(20px); background: white; }
 
+/* Threshold input row */
+.threshold-row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding: 11px 14px; background: var(--glass-bg); border: 1px solid var(--border-subtle); border-radius: 12px; font-size: 13px; color: var(--text-secondary); }
+.threshold-label { font-size: 13px; }
+.threshold-input { width: 70px; padding: 6px 10px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-primary); font-size: 13px; text-align: center; outline: none; }
+.threshold-input:focus { border-color: var(--accent); }
+
 /* Interval Options */
 .interval-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
 .interval-btn { padding: 8px; background: var(--glass-bg); border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all 0.2s; text-align: center; }

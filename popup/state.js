@@ -69,6 +69,8 @@
       inputAPIKey: get('inputAPIKey'),
       toggleAutoRefresh: get('toggleAutoRefresh'),
       intervalField: get('intervalField'),
+      toggleNotifications: get('toggleNotifications'),
+      inputNotifyThreshold: get('inputNotifyThreshold'),
 
       // History
       histAvg: get('histAvg'),
