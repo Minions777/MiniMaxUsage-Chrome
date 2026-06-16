@@ -77,14 +77,14 @@ Content-Type: application/json
     {
       "model_name": "MiniMax-M3",
       "current_interval_total_count": 1500,           // 5小时窗口总额
-      "current_interval_usage_count": 1200,           // 剩余（兼容旧字段）
-      "current_interval_remaining_percent": 80.0,     // M3 新增：剩余百分比
+      "current_interval_usage_count": 300,            // M3 字段语义: 已使用次数 (剩余 = total - used)
+      "current_interval_remaining_percent": 80.0,     // M3 字段语义: 命名反向，实际是"已用%" (80 表示已用 80%)
       "remains_time": 3600000,                        // M3 改为：相对时间（毫秒）
       "start_time": 1699999999999,                    // M3 新增：窗口开始时间
       "end_time": 1699999999999,                      // M3 新增：窗口结束时间
       "current_weekly_total_count": 15000,            // 周限额总额
-      "current_weekly_usage_count": 3000,             // 周剩余（兼容旧字段）
-      "current_weekly_remaining_percent": 80.0,       // M3 新增：周剩余百分比
+      "current_weekly_usage_count": 3000,             // M3 字段语义: 周已使用次数 (剩余 = total - used)
+      "current_weekly_remaining_percent": 80.0,       // M3 字段语义: 命名反向，实际是"周已用%"
       "weekly_remains_time": 86400000                 // M3 新增：周重置倒计时（毫秒）
     }
   ]
@@ -130,26 +130,28 @@ Authorization: Bearer <API_KEY>
 ### 用量计算逻辑（M3 更新）
 
 ```javascript
-// M3: 使用 remaining_percent（剩余百分比）
-intervalRemainingPercent = current_interval_remaining_percent  // 直接使用 API 返回值
-intervalRemains = Math.round(total * remainingPercent / 100)   // 基于百分比计算
-intervalUsed = total - intervalRemains
+// M3: current_interval_remaining_percent 字段语义反向 (80 表示已用 80%)
+// 显示剩余% = 100 - remaining_percent
+intervalRemainingPercent = 100 - current_interval_remaining_percent
+intervalUsed = current_interval_usage_count                      // 直接读取 (已使用次数)
+intervalRemains = intervalTotal - intervalUsed                    // 剩余 = 总额 - 已用
 
-// M3: 颜色逻辑反转（剩得多绿，剩得少红）
-if (remainingPercent >= 60) color = 'green'
-else if (remainingPercent >= 30) color = 'orange'
+// M3: 颜色逻辑 (剩余% 多 → 绿, 少 → 红)
+if (intervalRemainingPercent >= 60) color = 'green'
+else if (intervalRemainingPercent >= 30) color = 'orange'
 else color = 'red'
 
-// M3: 时间字段变为相对时间
-intervalResetTime = Date.now() + remains_time  // remains_time 是毫秒数
+// M3: 时间字段变为相对毫秒
+intervalResetMs = remains_time                                   // remains_time 是毫秒数
+intervalResetTime = Date.now() + intervalResetMs
+
+// 周限额 (同样字段语义)
+weeklyRemainingPercent = 100 - current_weekly_remaining_percent
+weeklyUsed = current_weekly_usage_count
+weeklyRemains = weeklyTotal - weeklyUsed
 weeklyResetTime = Date.now() + weekly_remains_time
 
-// 周限额（同样使用 remaining_percent）
-weeklyRemainingPercent = current_weekly_remaining_percent
-weeklyRemains = Math.round(weeklyTotal * weeklyRemainingPercent / 100)
-weeklyUsed = weeklyTotal - weeklyRemains
-
-// Token 消耗统计（从账单记录聚合）
+// Token 消耗统计 (从账单记录聚合)
 yesterdayTokens = sum(records where timestamp in [昨天0点, 今天0点))
 sevenDayTokens = sum(records where timestamp >= 7天前)
 monthTokens = sum(records where timestamp >= 本月1号0点)

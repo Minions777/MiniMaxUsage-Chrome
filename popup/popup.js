@@ -187,12 +187,11 @@ function displayUsage(usage) {
   statUsed.textContent = formatNumber(usage.intervalRemains);
   statTotal.textContent = formatNumber(total);
 
-  // 本周 Ring（M3: 使用 remaining_percent，显示3倍额度）
-  // 注意：百分比计算使用原始值，3倍只用于显示
+  // 本周 Ring（M3: 使用 remaining_percent 剩余百分比）
+  // 字段语义：weeklyRemainingPercent 是已被 background.js 反转过的"剩余%"（0-100）
   const weeklyRemainingPct = usage.weeklyRemainingPercent != null
     ? usage.weeklyRemainingPercent / 100
     : (usage.weeklyTotal > 0 ? usage.weeklyRemains / usage.weeklyTotal : 0);
-  const weeklyTotal = (usage.weeklyTotal || 1) * 3;  // 本周限额乘以3倍（仅用于显示）
 
   const weeklyCircumference = 2 * Math.PI * 50;
   const weeklyOffset = weeklyCircumference * (1 - weeklyRemainingPct);
@@ -208,10 +207,10 @@ function displayUsage(usage) {
   document.getElementById('weeklyRingPercent').style.color = weeklyColorInfo.color;
   document.getElementById('weeklyRingPercent').style.textShadow = `0 0 10px ${weeklyColorInfo.shadow}`;
 
-  // M3: 显示剩余次数（3倍额度）
-  document.getElementById('statWeeklyRemains').textContent = formatNumber(usage.weeklyRemains * 3);
-  document.getElementById('statWeeklyTotal').textContent = formatNumber(weeklyTotal);
-  document.getElementById('statWeeklyRemainsCard').textContent = formatNumber(usage.weeklyRemains * 3);
+  // M3: 显示周限额剩余次数和总额（不再使用魔法倍数）
+  document.getElementById('statWeeklyRemains').textContent = formatNumber(usage.weeklyRemains);
+  document.getElementById('statWeeklyTotal').textContent = formatNumber(usage.weeklyTotal);
+  document.getElementById('statWeeklyRemainsCard').textContent = formatNumber(usage.weeklyRemains);
 
   // 重置时间
   intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
@@ -242,8 +241,7 @@ function displayUsage(usage) {
   endpointLabel.textContent = currentSettings.endpoint + ' · ' + endpointName;
 
   const interval = currentSettings.autoRefreshInterval || 60;
-  const displayInterval = interval < 60 ? '60s (最小1分钟)' : `${interval}s`;
-  refreshText.textContent = `自动刷新中 · 每 ${displayInterval}`;
+  refreshText.textContent = `自动刷新中 · 每 ${interval}s`;
 
   showUsage();
 }

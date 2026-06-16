@@ -438,7 +438,8 @@ async function startAutoRefresh() {
   const settings = await getSettings();
   if (!settings.autoRefreshEnabled || !settings.apiKey) return;
 
-  const periodInMinutes = Math.max(1, settings.autoRefreshInterval / 60);
+  // MV3 chrome.alarms 不支持 < 1 分钟，统一向下取整到分钟
+  const periodInMinutes = Math.max(1, Math.round(settings.autoRefreshInterval / 60));
   chrome.alarms.create('autoRefresh', { periodInMinutes });
 }
 
