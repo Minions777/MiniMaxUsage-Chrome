@@ -23,6 +23,8 @@
       if (message.type === 'USAGE_UPDATED') {
         display.refreshUsageDisplay();
       }
+      // 同步处理，不保持异步通道；显式 return 避免 sendResponse 警告
+      return undefined;
     });
 
     // Load settings and cached usage

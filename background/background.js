@@ -164,27 +164,52 @@ async function addLog(type, message) {
   await saveLogs(logs);
 }
 
+// 通用带重试的 JSON GET。
+// 重试仅针对 network error / 5xx；4xx 立即放弃（API key 错/参数错重试无意义）。
+// maxAttempts = 1 表示不重试（默认 2 次重试 = 3 次总尝试）。
+async function fetchJsonWithRetry(url, headers, { timeoutMs = 10000, maxAttempts = 3, backoffMs = 500 } = {}) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        return await response.json();
+      }
+      // 4xx (除 408/429) 不重试
+      if (response.status >= 400 && response.status < 500
+          && response.status !== 408 && response.status !== 429) {
+        lastErr = new Error(`HTTP ${response.status}`);
+        break;
+      }
+      lastErr = new Error(`HTTP ${response.status}`);
+    } catch (e) {
+      clearTimeout(timeoutId);
+      lastErr = e;
+    }
+    if (attempt < maxAttempts) {
+      // 指数退避: 500ms, 1000ms, ...
+      await new Promise(r => setTimeout(r, backoffMs * Math.pow(2, attempt - 1)));
+    }
+  }
+  throw lastErr;
+}
+
 // 获取订阅信息
 async function fetchSubscription(apiKey, endpoint) {
   try {
     const url = endpoint.baseURL + endpoint.subscriptionPath;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);  // 10秒超时
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      signal: controller.signal
+    const data = await fetchJsonWithRetry(url, {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
     });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
     return data.current_subscribe || null;
   } catch (error) {
     return null;
@@ -198,42 +223,33 @@ async function fetchAllBillingRecords(apiKey, endpoint) {
   const limit = 100;
   const maxPages = 30;  // 最多30页，防止无限循环
   const minStartTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const headers = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
 
   while (page <= maxPages) {
+    const url = `${endpoint.baseURL}${endpoint.billingPath}?page=${page}&limit=${limit}&aggregate=false`;
+    let data;
     try {
-      const url = `${endpoint.baseURL}${endpoint.billingPath}?page=${page}&limit=${limit}&aggregate=false`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);  // 每页10秒超时
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) break;
-
-      const data = await response.json();
-      const records = data.charge_records || [];
-
-      if (records.length === 0) break;
-
-      for (const r of records) {
-        const ts = r.created_at * 1000;
-        if (minStartTime && ts < minStartTime) return allRecords;
-        allRecords.push(r);
-      }
-
-      if (records.length < limit) break;
-      page++;
-    } catch {
+      data = await fetchJsonWithRetry(url, headers);
+    } catch (e) {
+      // 已重试 3 次仍失败：保留已收集的记录 (部分数据 > 完全无数据)
+      await addLog('warn', `账单分页 ${page} 获取失败 (${e.message})，返回已有 ${allRecords.length} 条`);
       break;
     }
+
+    const records = data.charge_records || [];
+    if (records.length === 0) break;
+
+    for (const r of records) {
+      const ts = r.created_at * 1000;
+      if (minStartTime && ts < minStartTime) return allRecords;
+      allRecords.push(r);
+    }
+
+    if (records.length < limit) break;
+    page++;
   }
 
   return allRecords;
