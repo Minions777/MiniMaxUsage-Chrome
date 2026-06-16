@@ -78,6 +78,10 @@
                   <stop offset="0%" stop-color="#00d09c"/>
                   <stop offset="100%" stop-color="#00b894"/>
                 </linearGradient>
+                <linearGradient id="weeklyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#4facfe"/>
+                  <stop offset="100%" stop-color="#00f2fe"/>
+                </linearGradient>
                 <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stop-color="#f5a623"/>
                   <stop offset="100%" stop-color="#e17055"/>
@@ -98,6 +102,7 @@
             </div>
             <div class="ring-stats">
               <span id="statUsed">--</span>/<span id="statTotal">--</span>
+              <span class="ring-stats-label">剩余</span>
             </div>
           </div>
 
@@ -114,24 +119,34 @@
               <div class="ring-label">本周</div>
             </div>
             <div class="ring-stats">
-              <span id="statWeeklyUsed">--</span>/<span id="statWeeklyTotal">--</span>
+              <span id="statWeeklyRemains">--</span>/<span id="statWeeklyTotal">--</span>
+              <span class="ring-stats-label">剩余</span>
             </div>
           </div>
         </div>
 
-        <!-- Compact Info Row -->
-        <div class="info-row">
-          <div class="info-item">
-            <span class="info-label">⏱️ 重置</span>
-            <span class="info-value" id="intervalResetTime">--</span>
+        <!-- Info Cards -->
+        <div class="info-cards">
+          <div class="info-card">
+            <div class="info-card-icon">⏱️</div>
+            <div class="info-card-content">
+              <div class="info-card-label">重置倒计时</div>
+              <div class="info-card-value" id="intervalResetTime">--</div>
+            </div>
           </div>
-          <div class="info-item">
-            <span class="info-label">📅 本周剩余</span>
-            <span class="info-value" id="statWeeklyRemains">--</span>
+          <div class="info-card">
+            <div class="info-card-icon">📅</div>
+            <div class="info-card-content">
+              <div class="info-card-label">本周剩余</div>
+              <div class="info-card-value" id="statWeeklyRemainsCard">--</div>
+            </div>
           </div>
-          <div class="info-item" id="subscriptionGroup" style="display:none">
-            <span class="info-label">⏳ 到期</span>
-            <span class="info-value"><span id="subscriptionDays">--</span>天</span>
+          <div class="info-card" id="subscriptionGroup" style="display:none">
+            <div class="info-card-icon">⏳</div>
+            <div class="info-card-content">
+              <div class="info-card-label">套餐到期</div>
+              <div class="info-card-value"><span id="subscriptionDays">--</span> 天</div>
+            </div>
           </div>
         </div>
 

@@ -2,8 +2,9 @@
 
 🎨 一个精美的 Chrome 浏览器插件，实时监控 MiniMax API 使用量，支持动画进度条和历史记录。
 
-![Chrome Web Store](https://img.shields.io/badge/Chrome-v3.0-blue)
+![Chrome Web Store](https://img.shields.io/badge/Chrome-v3.1-blue)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20%2B%20Edge-green)
+![MiniMax-M3](https://img.shields.io/badge/MiniMax-M3%20Ready-green)
 
 ---
 
@@ -11,13 +12,14 @@
 
 ### 核心监控
 - 📊 **实时监控** — Token 用量实时更新，带动画环形进度条
-- 🌈 **颜色提示** — 用量由低到高显示绿 → 橙 → 红
-- 🔔 **Badge 提醒** — 工具栏图标实时显示用量百分比
+- 🌈 **颜色提示** — 剩余充足显示绿色，不足显示红色（M3 新逻辑）
+- 🔔 **Badge 提醒** — 工具栏图标实时显示剩余百分比
 
-### 双窗口配额
+### 双窗口配额（M3 适配）
 - ⏱️ **5小时滚动窗口** — MiniMax-M 系列模型的 5 小时用量窗口
 - 📅 **周限额** — 本周用量统计（周一零点重置）
-- 🔢 **直观数字** — 已用 / 剩余 / 总额三点显示
+- 🔢 **直观数字** — 剩余 / 总额双点显示（M3: 使用 remaining_percent）
+- 🕐 **时间窗口** — 显示当前配额周期的时间范围
 
 ### Token 消耗统计
 - 📆 **昨日消耗** — 昨日 Token 消耗量
@@ -67,18 +69,23 @@ Authorization: Bearer <API_KEY>
 Content-Type: application/json
 ```
 
-**响应字段解析：**
+**响应字段解析（M3 更新）：**
 ```javascript
 {
   "base_resp": { "status_code": 0, "status_msg": "success" },
   "model_remains": [
     {
-      "model_name": "MiniMax-M1.0-mini",
-      "current_interval_total_count": 1500,    // 5小时窗口总额
-      "current_interval_usage_count": 1200,   // 剩余
-      "remains_time": 1699999999999,          // 重置时间戳
-      "current_weekly_total_count": 15000,    // 周限额总额
-      "current_weekly_usage_count": 3000      // 周已用
+      "model_name": "MiniMax-M3",
+      "current_interval_total_count": 1500,           // 5小时窗口总额
+      "current_interval_usage_count": 1200,           // 剩余（兼容旧字段）
+      "current_interval_remaining_percent": 80.0,     // M3 新增：剩余百分比
+      "remains_time": 3600000,                        // M3 改为：相对时间（毫秒）
+      "start_time": 1699999999999,                    // M3 新增：窗口开始时间
+      "end_time": 1699999999999,                      // M3 新增：窗口结束时间
+      "current_weekly_total_count": 15000,            // 周限额总额
+      "current_weekly_usage_count": 3000,             // 周剩余（兼容旧字段）
+      "current_weekly_remaining_percent": 80.0,       // M3 新增：周剩余百分比
+      "weekly_remains_time": 86400000                 // M3 新增：周重置倒计时（毫秒）
     }
   ]
 }
@@ -120,17 +127,27 @@ Authorization: Bearer <API_KEY>
 }
 ```
 
-### 用量计算逻辑
+### 用量计算逻辑（M3 更新）
 
 ```javascript
-// 5小时窗口配额
-intervalUsed = current_interval_total_count - current_interval_usage_count
-intervalRemains = current_interval_usage_count
-intervalPercentage = intervalUsed / current_interval_total_count * 100
+// M3: 使用 remaining_percent（剩余百分比）
+intervalRemainingPercent = current_interval_remaining_percent  // 直接使用 API 返回值
+intervalRemains = Math.round(total * remainingPercent / 100)   // 基于百分比计算
+intervalUsed = total - intervalRemains
 
-// 周限额
-weeklyUsed = current_weekly_total_count - current_weekly_usage_count
-weeklyRemains = current_weekly_usage_count
+// M3: 颜色逻辑反转（剩得多绿，剩得少红）
+if (remainingPercent >= 60) color = 'green'
+else if (remainingPercent >= 30) color = 'orange'
+else color = 'red'
+
+// M3: 时间字段变为相对时间
+intervalResetTime = Date.now() + remains_time  // remains_time 是毫秒数
+weeklyResetTime = Date.now() + weekly_remains_time
+
+// 周限额（同样使用 remaining_percent）
+weeklyRemainingPercent = current_weekly_remaining_percent
+weeklyRemains = Math.round(weeklyTotal * weeklyRemainingPercent / 100)
+weeklyUsed = weeklyTotal - weeklyRemains
 
 // Token 消耗统计（从账单记录聚合）
 yesterdayTokens = sum(records where timestamp in [昨天0点, 今天0点))
@@ -173,5 +190,5 @@ const STORAGE_KEYS = {
 - [ ] 支持桌面通知（额度即将用尽时提醒）
 - [ ] 快捷键支持
 - [ ] 多账号管理
-- [ ] Token 消耗统计（昨日/近7天/当月）界面整合
+- [ ] 多模型用量明细显示
 - [ ] 订阅到期提醒

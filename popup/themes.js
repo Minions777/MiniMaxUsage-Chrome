@@ -143,10 +143,30 @@ function updateSVGGradients(theme) {
   const defs = document.querySelector('.theme-gradients');
   if (!defs) return;
 
+  // 5小时限额渐变：使用主题色
+  const ringStart = theme.colors['--ring-gradient-start'] || '#00d09c';
+  const ringEnd = theme.colors['--ring-gradient-end'] || '#00b894';
+
+  // 本周限额渐变：使用互补色（蓝紫色系）
+  const weeklyStart = theme.id === 'neon' ? '#4facfe'
+    : theme.id === 'ocean' ? '#a855f7'
+    : theme.id === 'sunset' ? '#ff6b6b'
+    : theme.id === 'purple' ? '#ec4899'
+    : '#888888';
+  const weeklyEnd = theme.id === 'neon' ? '#00f2fe'
+    : theme.id === 'ocean' ? '#7c3aed'
+    : theme.id === 'sunset' ? '#ff8c42'
+    : theme.id === 'purple' ? '#a855f7'
+    : '#666666';
+
   defs.innerHTML = `
     <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${theme.colors['--ring-gradient-start']}"/>
-      <stop offset="100%" stop-color="${theme.colors['--ring-gradient-end']}"/>
+      <stop offset="0%" stop-color="${ringStart}"/>
+      <stop offset="100%" stop-color="${ringEnd}"/>
+    </linearGradient>
+    <linearGradient id="weeklyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${weeklyStart}"/>
+      <stop offset="100%" stop-color="${weeklyEnd}"/>
     </linearGradient>
     <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#f5a623"/>

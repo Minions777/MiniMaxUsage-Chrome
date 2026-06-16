@@ -23,12 +23,10 @@ const statUsed = document.getElementById('statUsed');
 const statRemains = document.getElementById('statRemains');
 const statTotal = document.getElementById('statTotal');
 const intervalResetTime = document.getElementById('intervalResetTime');
-const statWeeklyUsed = document.getElementById('statWeeklyUsed');
 const statWeeklyRemains = document.getElementById('statWeeklyRemains');
 const statWeeklyTotal = document.getElementById('statWeeklyTotal');
 const lastUpdated = document.getElementById('lastUpdated');
 const endpointLabel = document.getElementById('endpointLabel');
-const refreshIndicator = document.getElementById('refreshIndicator');
 const refreshText = document.getElementById('refreshText');
 const errorMessage = document.getElementById('errorMessage');
 
@@ -55,6 +53,7 @@ const historyList = document.getElementById('historyList');
 
 // Utility functions
 function formatNumber(num) {
+  if (num == null || isNaN(num)) return '--';
   if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
   if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
   return num.toString();
@@ -73,9 +72,16 @@ function formatDate(timestamp) {
   return `${month}/${day}`;
 }
 
-function colorForPercentage(pct) {
-  if (pct < 0.5) return { color: 'var(--accent)', gradient: 'url(#greenGradient)', shadow: 'var(--accent-glow)' };
-  if (pct < 0.8) return { color: 'var(--orange-color)', gradient: 'url(#orangeGradient)', shadow: 'rgba(245, 166, 35, 0.4)' };
+// M3: 颜色逻辑反转 - 现在传入的是"剩余%"（0-1），剩得多绿色，剩得少红色
+// isWeekly=true 时使用本周限额的配色（蓝紫色系）
+function colorForPercentage(remainingPct, isWeekly = false) {
+  if (isWeekly) {
+    // 本周限额配色：使用蓝紫色系渐变
+    return { color: '#4facfe', gradient: 'url(#weeklyGradient)', shadow: 'rgba(79, 172, 254, 0.4)' };
+  }
+  // 5小时限额配色：使用主题色
+  if (remainingPct >= 0.6) return { color: 'var(--accent)', gradient: 'url(#greenGradient)', shadow: 'var(--accent-glow)' };
+  if (remainingPct >= 0.3) return { color: 'var(--orange-color)', gradient: 'url(#orangeGradient)', shadow: 'rgba(245, 166, 35, 0.4)' };
   return { color: 'var(--red-color)', gradient: 'url(#redGradient)', shadow: 'rgba(255, 107, 107, 0.4)' };
 }
 
@@ -154,50 +160,61 @@ async function refreshUsageDisplay() {
   displayUsage(result);
 }
 
-// Display usage data
+// Display usage data（M3: 显示剩余%，颜色逻辑反转）
 function displayUsage(usage) {
-  // 5小时 Ring
+  // M3: 使用 remaining_percent（剩余百分比）
   const total = usage.intervalTotal || 1;
-  const pct = total > 0 ? usage.intervalUsed / total : 0;
+  const remainingPct = usage.intervalRemainingPercent != null
+    ? usage.intervalRemainingPercent / 100
+    : (total > 0 ? usage.intervalRemains / total : 0);
+
   const circumference = 2 * Math.PI * 50;
-  const offset = circumference * (1 - pct);
+  // M3: 进度条显示"剩余%"（圆环从满到空）
+  const offset = circumference * (1 - remainingPct);
 
   ringProgress.style.strokeDasharray = circumference;
   ringProgress.style.strokeDashoffset = offset;
-  const colorInfo = colorForPercentage(pct);
+  const colorInfo = colorForPercentage(remainingPct);
   ringProgress.style.stroke = colorInfo.gradient;
   ringProgress.style.filter = `drop-shadow(0 0 6px ${colorInfo.shadow})`;
 
-  ringPercent.textContent = Math.round(pct * 100) + '%';
+  // M3: 显示剩余百分比
+  ringPercent.textContent = Math.round(remainingPct * 100) + '%';
   ringPercent.style.color = colorInfo.color;
   ringPercent.style.textShadow = `0 0 10px ${colorInfo.shadow}`;
 
-  statUsed.textContent = formatNumber(usage.intervalUsed);
+  // M3: 显示剩余次数和总额
+  statUsed.textContent = formatNumber(usage.intervalRemains);
   statTotal.textContent = formatNumber(total);
 
-  // 本周 Ring
-  const weeklyTotal = usage.weeklyTotal || 1;
-  const weeklyPct = weeklyTotal > 0 ? usage.weeklyUsed / weeklyTotal : 0;
+  // 本周 Ring（M3: 使用 remaining_percent，显示3倍额度）
+  // 注意：百分比计算使用原始值，3倍只用于显示
+  const weeklyRemainingPct = usage.weeklyRemainingPercent != null
+    ? usage.weeklyRemainingPercent / 100
+    : (usage.weeklyTotal > 0 ? usage.weeklyRemains / usage.weeklyTotal : 0);
+  const weeklyTotal = (usage.weeklyTotal || 1) * 3;  // 本周限额乘以3倍（仅用于显示）
+
   const weeklyCircumference = 2 * Math.PI * 50;
-  const weeklyOffset = weeklyCircumference * (1 - weeklyPct);
+  const weeklyOffset = weeklyCircumference * (1 - weeklyRemainingPct);
   const weeklyRing = document.getElementById('weeklyRingProgress');
-  const weeklyColorInfo = colorForPercentage(weeklyPct);
+  const weeklyColorInfo = colorForPercentage(weeklyRemainingPct, true);  // 使用本周限额配色
 
   weeklyRing.style.strokeDasharray = weeklyCircumference;
   weeklyRing.style.strokeDashoffset = weeklyOffset;
   weeklyRing.style.stroke = weeklyColorInfo.gradient;
   weeklyRing.style.filter = `drop-shadow(0 0 6px ${weeklyColorInfo.shadow})`;
 
-  document.getElementById('weeklyRingPercent').textContent = Math.round(weeklyPct * 100) + '%';
+  document.getElementById('weeklyRingPercent').textContent = Math.round(weeklyRemainingPct * 100) + '%';
   document.getElementById('weeklyRingPercent').style.color = weeklyColorInfo.color;
   document.getElementById('weeklyRingPercent').style.textShadow = `0 0 10px ${weeklyColorInfo.shadow}`;
 
-  document.getElementById('statWeeklyUsed').textContent = formatNumber(usage.weeklyUsed);
+  // M3: 显示剩余次数（3倍额度）
+  document.getElementById('statWeeklyRemains').textContent = formatNumber(usage.weeklyRemains * 3);
   document.getElementById('statWeeklyTotal').textContent = formatNumber(weeklyTotal);
+  document.getElementById('statWeeklyRemainsCard').textContent = formatNumber(usage.weeklyRemains * 3);
 
-  // 重置时间和本周剩余
+  // 重置时间
   intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
-  document.getElementById('statWeeklyRemains').textContent = formatNumber(usage.weeklyRemains);
 
   // Token 消耗统计
   if (usage.tokenStats) {

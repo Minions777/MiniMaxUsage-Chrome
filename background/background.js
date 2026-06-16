@@ -127,13 +127,19 @@ async function addLog(type, message) {
 async function fetchSubscription(apiKey, endpoint) {
   try {
     const url = endpoint.baseURL + endpoint.subscriptionPath;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);  // 10秒超时
+
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
-      }
+      },
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) return null;
 
@@ -149,18 +155,25 @@ async function fetchAllBillingRecords(apiKey, endpoint) {
   const allRecords = [];
   let page = 1;
   const limit = 100;
+  const maxPages = 30;  // 最多30页，防止无限循环
   const minStartTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
-  while (true) {
+  while (page <= maxPages) {
     try {
       const url = `${endpoint.baseURL}${endpoint.billingPath}?page=${page}&limit=${limit}&aggregate=false`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);  // 每页10秒超时
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
-        }
+        },
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) break;
 
@@ -222,15 +235,12 @@ function daysUntil(date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86400000));
 }
 
-// 格式化重置倒计时
-function formatResetCountdown(resetTime) {
-  if (!resetTime) return '--';
+// M3: 格式化相对时间倒计时（接受毫秒数）
+function formatResetCountdownMs(ms) {
+  if (!ms || ms <= 0) return '--';
 
-  const diff = resetTime.getTime() - Date.now();
-  if (diff <= 0) return '即将重置';
-
-  const h = Math.floor(diff / 3600000);
-  const m = Math.floor((diff % 3600000) / 60000);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
 
   if (h > 0) {
     return m > 0 ? `${h} 小时 ${m} 分钟后重置` : `${h} 小时后重置`;
@@ -238,7 +248,7 @@ function formatResetCountdown(resetTime) {
   return `${m} 分钟后重置`;
 }
 
-// 获取最新用量
+// 获取最新用量（适配 M3 Token Plan）
 async function fetchUsage() {
   const settings = await getSettings();
 
@@ -287,17 +297,42 @@ async function fetchUsage() {
       || models.find(m => m.current_interval_total_count > 0)
       || models[0];
 
-    // 计算 5小时窗口配额
+    // M3 API 字段语义：
+    // - current_interval_usage_count = 已使用次数
+    // - current_interval_remaining_percent = 命名反向，实际是"已用%"（92 表示已用 92%）
+    // - 显示"剩余%" = 100 - remaining_percent
     const intervalTotal = mainModel.current_interval_total_count || 0;
-    const intervalUsage = mainModel.current_interval_usage_count || 0;
-    const intervalUsed = intervalTotal - intervalUsage;
-    const intervalRemains = intervalUsage;
+    const intervalUsedCount = mainModel.current_interval_usage_count || 0;  // 已使用次数
+    const intervalRemains = intervalTotal - intervalUsedCount;  // 剩余次数 = 总数 - 已用
 
-    // 计算周限额
+    // M3: remaining_percent 命名反向，100 - remainingPct 才是真正的"剩余%"
+    const intervalRemainingPct = mainModel.current_interval_remaining_percent;
+    const intervalRemainingPercent = (intervalRemainingPct !== undefined && intervalRemainingPct !== null)
+      ? Math.round(100 - intervalRemainingPct)  // 反转：remaining_percent=92 表示已用 92%，剩余 8%
+      : (intervalTotal > 0 ? Math.round((intervalRemains / intervalTotal) * 100) : null);
+
+    // M3: remains_time 是相对时间（毫秒），需要计算绝对时间
+    const intervalResetMs = mainModel.remains_time || 0;
+    const intervalResetTime = intervalResetMs > 0 ? Date.now() + intervalResetMs : null;
+
+    // M3 新增：时间窗口
+    const startTime = mainModel.start_time || null;
+    const endTime = mainModel.end_time || null;
+
+    // 周限额
     const weeklyTotal = mainModel.current_weekly_total_count || 0;
-    const weeklyUsage = mainModel.current_weekly_usage_count || 0;
-    const weeklyUsed = weeklyTotal - weeklyUsage;
-    const weeklyRemains = weeklyUsage;
+    const weeklyUsedCount = mainModel.current_weekly_usage_count || 0;  // 已使用次数
+    const weeklyRemains = weeklyTotal - weeklyUsedCount;  // 剩余次数
+
+    // M3: weekly_remaining_percent 同样需要反转
+    const weeklyRemainingPct = mainModel.current_weekly_remaining_percent;
+    const weeklyRemainingPercent = (weeklyRemainingPct !== undefined && weeklyRemainingPct !== null)
+      ? Math.round(100 - weeklyRemainingPct)  // 反转
+      : (weeklyTotal > 0 ? Math.round((weeklyRemains / weeklyTotal) * 100) : null);
+
+    // M3: weekly_remains_time 是相对时间（毫秒）
+    const weeklyResetMs = mainModel.weekly_remains_time || 0;
+    const weeklyResetTime = weeklyResetMs > 0 ? Date.now() + weeklyResetMs : null;
 
     // 获取订阅信息和 Token 消耗统计（并行请求）
     let subscription = null;
@@ -324,22 +359,24 @@ async function fetchUsage() {
 
     const usage = {
       // 5小时窗口配额
-      intervalUsed,
-      intervalRemains,
-      intervalTotal,
-      intervalResetTime: mainModel.remains_time || null,
+      intervalUsed: intervalUsedCount,  // 已使用次数
+      intervalRemains,                  // 剩余次数
+      intervalTotal,                    // 总次数
+      intervalRemainingPercent,         // M3: 剩余百分比（已反转）
+      intervalResetTime,
+      intervalResetMs,                  // M3: 重置倒计时（毫秒）
+
+      // 时间窗口（M3 新增）
+      windowStartTime: startTime,
+      windowEndTime: endTime,
 
       // 周限额
-      weeklyUsed,
-      weeklyRemains,
-      weeklyTotal,
-
-      // 兼容旧字段
-      used: intervalUsed,
-      remains: intervalRemains,
-      total: intervalTotal,
-      resetTime: mainModel.remains_time || null,
-      planType: 'Coding Plan',
+      weeklyUsed: weeklyUsedCount,      // 已使用次数
+      weeklyRemains,                    // 剩余次数
+      weeklyTotal,                      // 总次数
+      weeklyRemainingPercent,           // M3: 剩余百分比（已反转）
+      weeklyResetTime,
+      weeklyResetMs,                    // M3: 重置倒计时（毫秒）
 
       // Token 消耗统计
       tokenStats: {
@@ -356,12 +393,13 @@ async function fetchUsage() {
       } : null,
 
       // 格式化后的重置时间字符串
-      intervalResetTimeStr: formatResetCountdown(new Date(mainModel.remains_time))
+      intervalResetTimeStr: formatResetCountdownMs(intervalResetMs),
+      weeklyResetTimeStr: formatResetCountdownMs(weeklyResetMs)
     };
 
     await chrome.storage.local.set({ [STORAGE_KEYS.LAST_USAGE]: usage });
     await addHistoryRecord(usage);
-    await addLog('success', `获取用量成功 — 已用 ${intervalUsed} / 总计 ${intervalTotal}`);
+    await addLog('success', `获取用量成功 — 剩余 ${intervalRemains} / 总计 ${intervalTotal} (${intervalRemainingPercent ?? '--'}%)`);
     updateBadge(usage);
 
     return usage;
@@ -371,17 +409,22 @@ async function fetchUsage() {
   }
 }
 
-// 更新扩展图标 badge
+// 更新扩展图标 badge（M3: 显示剩余%，颜色逻辑反转）
 function updateBadge(usage) {
   if (!usage || usage.error) {
     chrome.action.setBadgeText({ text: '!' });
     chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
   } else {
-    const pct = usage.intervalTotal > 0 ? Math.round((usage.intervalUsed / usage.intervalTotal) * 100) : 0;
-    chrome.action.setBadgeText({ text: pct + '%' });
-    if (pct < 50) {
+    // M3: 使用 remaining_percent（剩余百分比）
+    const remainingPct = usage.intervalRemainingPercent ?? (
+      usage.intervalTotal > 0 ? Math.round((usage.intervalRemains / usage.intervalTotal) * 100) : 0
+    );
+    chrome.action.setBadgeText({ text: remainingPct + '%' });
+
+    // M3 颜色逻辑：剩得多绿色，剩得少红色
+    if (remainingPct >= 60) {
       chrome.action.setBadgeBackgroundColor({ color: '#00d09c' });
-    } else if (pct < 80) {
+    } else if (remainingPct >= 30) {
       chrome.action.setBadgeBackgroundColor({ color: '#fdcb6e' });
     } else {
       chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });

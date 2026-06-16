@@ -134,13 +134,52 @@ body::before {
 .ring-wrapper .ring-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
 .ring-wrapper .ring-percent { font-size: 24px; font-weight: 700; color: var(--accent); line-height: 1; text-shadow: 0 0 12px var(--accent-glow); }
 .ring-wrapper .ring-label { font-size: 10px; color: var(--text-muted); letter-spacing: 0.5px; text-transform: uppercase; }
-.ring-wrapper .ring-stats { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.ring-wrapper .ring-stats { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-muted); white-space: nowrap; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ring-stats-label { font-size: 8px; color: var(--text-muted); opacity: 0.7; letter-spacing: 0.5px; }
 
-/* Info Row */
-.info-row { display: flex; justify-content: center; gap: 24px; margin-bottom: 20px; }
-.info-item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-.info-label { color: var(--text-muted); }
-.info-value { color: var(--text-primary); font-weight: 500; }
+/* Info Cards */
+.info-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.info-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+.info-card:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+.info-card-icon {
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+.info-card-content {
+  width: 100%;
+}
+.info-card-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+  margin-bottom: 3px;
+}
+.info-card-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
 
 /* Token Stats */
 .token-stats { display: flex; justify-content: space-around; background: var(--glass-bg); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 14px 16px; }
