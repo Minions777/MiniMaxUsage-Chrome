@@ -23,7 +23,9 @@ const THEMES = {
       '--shadow-glow': '0 8px 32px rgba(0, 208, 156, 0.2)',
       '--ring-gradient-start': '#00d09c',
       '--ring-gradient-end': '#00b894',
-    }
+    },
+    // 本周限额配色：作为主题的一部分收敛到这里，加新主题只需加一组颜色。
+    weeklyGradient: { start: '#4facfe', end: '#00f2fe' },
   },
   ocean: {
     id: 'ocean',
@@ -47,7 +49,8 @@ const THEMES = {
       '--shadow-glow': '0 8px 32px rgba(0, 180, 255, 0.2)',
       '--ring-gradient-start': '#00b4ff',
       '--ring-gradient-end': '#0066cc',
-    }
+    },
+    weeklyGradient: { start: '#a855f7', end: '#7c3aed' },
   },
   sunset: {
     id: 'sunset',
@@ -71,7 +74,8 @@ const THEMES = {
       '--shadow-glow': '0 8px 32px rgba(255, 140, 66, 0.2)',
       '--ring-gradient-start': '#ff8c42',
       '--ring-gradient-end': '#ff5252',
-    }
+    },
+    weeklyGradient: { start: '#ff6b6b', end: '#ff8c42' },
   },
   purple: {
     id: 'purple',
@@ -95,7 +99,8 @@ const THEMES = {
       '--shadow-glow': '0 8px 32px rgba(168, 85, 247, 0.2)',
       '--ring-gradient-start': '#a855f7',
       '--ring-gradient-end': '#7c3aed',
-    }
+    },
+    weeklyGradient: { start: '#ec4899', end: '#a855f7' },
   },
   mono: {
     id: 'mono',
@@ -119,9 +124,13 @@ const THEMES = {
       '--shadow-glow': '0 8px 32px rgba(224, 224, 224, 0.08)',
       '--ring-gradient-start': '#e0e0e0',
       '--ring-gradient-end': '#888888',
-    }
+    },
+    weeklyGradient: { start: '#888888', end: '#666666' },
   }
 };
+
+const DEFAULT_WEEKLY_GRADIENT = { start: '#4facfe', end: '#00f2fe' };
+const DEFAULT_RING_GRADIENT = { start: '#00d09c', end: '#00b894' };
 
 // Apply theme to document
 function applyTheme(themeId) {
@@ -143,21 +152,9 @@ function updateSVGGradients(theme) {
   const defs = document.querySelector('.theme-gradients');
   if (!defs) return;
 
-  // 5小时限额渐变：使用主题色
-  const ringStart = theme.colors['--ring-gradient-start'] || '#00d09c';
-  const ringEnd = theme.colors['--ring-gradient-end'] || '#00b894';
-
-  // 本周限额渐变：使用互补色（蓝紫色系）
-  const weeklyStart = theme.id === 'neon' ? '#4facfe'
-    : theme.id === 'ocean' ? '#a855f7'
-    : theme.id === 'sunset' ? '#ff6b6b'
-    : theme.id === 'purple' ? '#ec4899'
-    : '#888888';
-  const weeklyEnd = theme.id === 'neon' ? '#00f2fe'
-    : theme.id === 'ocean' ? '#7c3aed'
-    : theme.id === 'sunset' ? '#ff8c42'
-    : theme.id === 'purple' ? '#a855f7'
-    : '#666666';
+  const ringStart = theme.colors['--ring-gradient-start'] || DEFAULT_RING_GRADIENT.start;
+  const ringEnd = theme.colors['--ring-gradient-end'] || DEFAULT_RING_GRADIENT.end;
+  const weekly = theme.weeklyGradient || DEFAULT_WEEKLY_GRADIENT;
 
   defs.innerHTML = `
     <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -165,8 +162,8 @@ function updateSVGGradients(theme) {
       <stop offset="100%" stop-color="${ringEnd}"/>
     </linearGradient>
     <linearGradient id="weeklyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${weeklyStart}"/>
-      <stop offset="100%" stop-color="${weeklyEnd}"/>
+      <stop offset="0%" stop-color="${weekly.start}"/>
+      <stop offset="100%" stop-color="${weekly.end}"/>
     </linearGradient>
     <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#f5a623"/>
