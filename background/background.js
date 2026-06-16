@@ -7,8 +7,17 @@ const STORAGE_KEYS = {
   AUTO_REFRESH_ENABLED: 'minimax_auto_refresh_enabled',
   HISTORY: 'minimax_usage_history',
   LAST_USAGE: 'minimax_last_usage',
+  LAST_FETCH_AT: 'minimax_last_fetch_at',
   LOGS: 'minimax_logs'
 };
+
+// 主用量刷新节流窗口 (毫秒)。SW 启动/alarms 触发时若距上次 fetch
+// 不足此间隔则直接返回缓存，避免免费多打 API。
+const USAGE_REFRESH_THROTTLE_MS = 60_000;
+// Token 账单 (消耗统计) 缓存有效期 — 30 分钟。
+// 账单页面变化慢，没必要跟主用量同步刷新。
+const BILLING_CACHE_TTL_MS = 30 * 60 * 1000;
+const BILLING_CACHE_KEY = 'minimax_billing_cache';
 
 const ENDPOINTS = {
   china: {
@@ -249,11 +258,22 @@ function formatResetCountdownMs(ms) {
 }
 
 // 获取最新用量（适配 M3 Token Plan）
-async function fetchUsage() {
+// options:
+//   force: true  → 跳过节流，无视上次 fetch 时间
+//   includeBilling: true → 拉取并刷新 Token 账单（默认 false，用缓存）
+// 命中节流窗口时返回当前缓存，避免重复打 API。
+async function fetchUsage({ force = false, includeBilling = false } = {}) {
   const settings = await getSettings();
 
   if (!settings.apiKey) {
     return { error: 'NO_API_KEY' };
+  }
+
+  // 节流：未传 force 且距上次 fetch < USAGE_REFRESH_THROTTLE_MS，直接返回缓存
+  if (!force) {
+    const cached = await getCachedUsage();
+    const throttleResult = await applyUsageThrottle(cached);
+    if (throttleResult) return throttleResult;
   }
 
   const endpoint = ENDPOINTS[settings.endpoint];
@@ -334,14 +354,16 @@ async function fetchUsage() {
     const weeklyResetMs = mainModel.weekly_remains_time || 0;
     const weeklyResetTime = weeklyResetMs > 0 ? Date.now() + weeklyResetMs : null;
 
-    // 获取订阅信息和 Token 消耗统计（并行请求）
+    // 获取订阅信息（每次都拉，~kbps 级数据）；账单按需拉取并缓存。
     let subscription = null;
     let billingRecords = [];
 
     try {
       const results = await Promise.allSettled([
         fetchSubscription(settings.apiKey, endpoint),
-        fetchAllBillingRecords(settings.apiKey, endpoint)
+        includeBilling
+          ? fetchAndCacheBilling(settings.apiKey, endpoint)
+          : loadCachedBilling()
       ]);
 
       if (results[0].status === 'fulfilled' && results[0].value) {
@@ -397,7 +419,10 @@ async function fetchUsage() {
       weeklyResetTimeStr: formatResetCountdownMs(weeklyResetMs)
     };
 
-    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_USAGE]: usage });
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.LAST_USAGE]: usage,
+      [STORAGE_KEYS.LAST_FETCH_AT]: Date.now()
+    });
     await addHistoryRecord(usage);
     await addLog('success', `获取用量成功 — 剩余 ${intervalRemains} / 总计 ${intervalTotal} (${intervalRemainingPercent ?? '--'}%)`);
     updateBadge(usage);
@@ -449,7 +474,7 @@ async function stopAutoRefresh() {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'autoRefresh') {
-    await fetchUsage();
+    await fetchUsage({ includeBilling: false });
     chrome.runtime.sendMessage({ type: 'USAGE_UPDATED' }).catch(() => {});
   }
 });
@@ -459,6 +484,37 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 async function getCachedUsage() {
   const result = await chrome.storage.local.get(STORAGE_KEYS.LAST_USAGE);
   return result[STORAGE_KEYS.LAST_USAGE] || null;
+}
+
+// 主用量节流：返回 null 表示需要实际 fetch；返回对象表示命中节流直接用。
+async function applyUsageThrottle(cached) {
+  if (!cached) return null;
+  const { [STORAGE_KEYS.LAST_FETCH_AT]: lastFetchAt } =
+    await chrome.storage.local.get(STORAGE_KEYS.LAST_FETCH_AT);
+  if (!lastFetchAt) return null;
+  if (Date.now() - lastFetchAt < USAGE_REFRESH_THROTTLE_MS) {
+    return cached;
+  }
+  return null;
+}
+
+// 账单缓存读取。返回 { records, fetchedAt }；过期则视为空（调用方应显式 force 拉取）。
+async function loadCachedBilling() {
+  const { [BILLING_CACHE_KEY]: cache } =
+    await chrome.storage.local.get(BILLING_CACHE_KEY);
+  if (!cache || !cache.records) return [];
+  if (Date.now() - (cache.fetchedAt || 0) > BILLING_CACHE_TTL_MS) {
+    return [];  // 过期 — 调用方需要重新 force 拉取
+  }
+  return cache.records;
+}
+
+async function fetchAndCacheBilling(apiKey, endpoint) {
+  const records = await fetchAllBillingRecords(apiKey, endpoint);
+  await chrome.storage.local.set({
+    [BILLING_CACHE_KEY]: { records, fetchedAt: Date.now() }
+  });
+  return records;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -491,14 +547,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'START_AUTO_REFRESH':
       startAutoRefresh().then(sendResponse);
       return true;
+    case 'REFRESH_BILLING':
+      // 强制拉取账单 (Token 消耗统计)，更新缓存后返回最新 records
+      (async () => {
+        const settings = await getSettings();
+        if (!settings.apiKey) {
+          sendResponse({ error: 'NO_API_KEY', records: [] });
+          return;
+        }
+        try {
+          const endpoint = ENDPOINTS[settings.endpoint];
+          const records = await fetchAndCacheBilling(settings.apiKey, endpoint);
+          const tokenStats = calculateTokenStats(records);
+          sendResponse({ records, tokenStats });
+        } catch (e) {
+          sendResponse({ error: e.message || 'NETWORK_ERROR', records: [] });
+        }
+      })();
+      return true;
   }
 });
 
 // 初始化
 (async () => {
   const settings = await getSettings();
-  if (settings.apiKey) {
-    await fetchUsage();
-    await startAutoRefresh();
+  if (!settings.apiKey) return;
+
+  // 仅在无缓存时主动 fetch，避免 SW 唤醒后立刻打 API。
+  // 有缓存时交给 chrome.alarms 调度，下一次闹钟自然更新。
+  const cached = await getCachedUsage();
+  if (!cached) {
+    await fetchUsage({ includeBilling: true });
   }
+  await startAutoRefresh();
 })();
