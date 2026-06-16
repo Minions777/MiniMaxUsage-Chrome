@@ -1,0 +1,13 @@
+{
+  "name": "MiniMaxUsage-Chrome",
+  "version": "1.0.0",
+  "description": "Monitor MiniMax Coding Plan token usage with beautiful UI",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

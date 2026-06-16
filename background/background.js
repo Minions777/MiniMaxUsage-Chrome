@@ -1,5 +1,14 @@
 // MiniMax Token Monitor - Background Service Worker
 
+// 导入纯工具函数 (lib/utils.js 是 UMD，浏览器/CJS 都可用)
+// 在 Service Worker 中通过 importScripts 加载
+try {
+  importScripts('../lib/utils.js');
+} catch (e) {
+  // 文件不存在或路径错误 — 保留 inline fallback
+  console.warn('Failed to importScripts lib/utils.js:', e);
+}
+
 const STORAGE_KEYS = {
   API_KEY: 'minimax_api_key',
   ENDPOINT: 'minimax_endpoint',

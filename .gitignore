@@ -2,3 +2,5 @@
 *.log
 *.tmp
 .nezha/
+node_modules/
+.worktrees/
