@@ -73,24 +73,8 @@
           <!-- 5小时 Ring -->
           <div class="ring-wrapper">
             <svg class="ring-svg" viewBox="0 0 120 120">
-              <defs class="theme-gradients">
-                <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#00d09c"/>
-                  <stop offset="100%" stop-color="#00b894"/>
-                </linearGradient>
-                <linearGradient id="weeklyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#4facfe"/>
-                  <stop offset="100%" stop-color="#00f2fe"/>
-                </linearGradient>
-                <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#f5a623"/>
-                  <stop offset="100%" stop-color="#e17055"/>
-                </linearGradient>
-                <linearGradient id="redGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#ff6b6b"/>
-                  <stop offset="100%" stop-color="#d63031"/>
-                </linearGradient>
-              </defs>
+              <!-- 4 个 linearGradient 由 themes.js 启动时填充，删除 HTML 静态版本避免双源真相。 -->
+              <defs class="theme-gradients"></defs>
               <circle class="ring-bg" cx="60" cy="60" r="50" fill="none" stroke-width="8"/>
               <circle class="ring-progress" id="ringProgress" cx="60" cy="60" r="50" fill="none" stroke-width="8"
                 stroke-linecap="round"
