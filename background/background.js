@@ -97,7 +97,16 @@ async function saveHistory(history) {
 }
 
 // 添加历史记录
+// 同一窗口（intervalResetTime 相同）只记录最早一条。
+// 自动刷新每分钟一次时会反复打到同一窗口，跳过冗余写入。
 async function addHistoryRecord(usage) {
+  const windowKey = usage.intervalResetTime || Date.now();
+  const { [STORAGE_KEYS.LAST_USAGE]: lastUsage } =
+    await chrome.storage.local.get(STORAGE_KEYS.LAST_USAGE);
+  if (lastUsage && lastUsage.intervalResetTime === windowKey) {
+    return;  // 同窗口，跳过
+  }
+
   const history = await getHistory();
   history.unshift({
     id: Date.now().toString(),

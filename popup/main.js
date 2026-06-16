@@ -77,6 +77,7 @@
       display.showSettings();
     });
     document.getElementById('btnRetry').addEventListener('click', () => display.refreshUsageDisplay());
+    document.getElementById('btnViewLog').addEventListener('click', () => display.showLogPanel());
 
     init();
   });
