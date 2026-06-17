@@ -84,6 +84,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'START_AUTO_REFRESH':
       startAutoRefresh().then(sendResponse);
       return true;
+    case 'REFRESH_USAGE':
+      (async () => {
+        try {
+          const result = await fetchUsage({ force: true, includeBilling: true });
+          sendResponse(result);
+        } catch (e) {
+          sendResponse({ error: e.message || 'NETWORK_ERROR' });
+        }
+      })();
+      return true;
     case 'REFRESH_BILLING':
       (async () => {
         const settings = await getSettings();

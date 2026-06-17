@@ -58,14 +58,11 @@
       state.isRefreshing = true;
       const btn = document.getElementById('btnRefresh');
       btn.classList.add('spinning');
-      const overlay = document.getElementById('refreshOverlay');
-      if (overlay) overlay.style.display = 'flex';
       try {
-        await display.refreshUsageDisplay();
+        await display.refreshUsageDisplay(true);
       } finally {
         btn.classList.remove('spinning');
         state.isRefreshing = false;
-        if (overlay) overlay.style.display = 'none';
       }
     });
     document.getElementById('btnSettings').addEventListener('click', () => {
@@ -78,7 +75,7 @@
       window.PMM.settingsPanel.applySettingsToUI(state.currentSettings);
       display.showSettings();
     });
-    document.getElementById('btnRetry').addEventListener('click', () => display.refreshUsageDisplay());
+    document.getElementById('btnRetry').addEventListener('click', () => display.refreshUsageDisplay(true));
     document.getElementById('btnViewLog').addEventListener('click', () => display.showLogPanel());
 
     init();

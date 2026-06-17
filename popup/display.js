@@ -160,7 +160,7 @@
 
   // ─── Background messaging ─────────────────────────────────────────────────
 
-  async function refreshUsageDisplay() {
+  async function refreshUsageDisplay(force = false) {
     if (!state.currentSettings) {
       state.currentSettings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
     }
@@ -171,7 +171,8 @@
 
     let result;
     try {
-      result = await chrome.runtime.sendMessage({ type: 'GET_USAGE' });
+      const type = force ? 'REFRESH_USAGE' : 'GET_USAGE';
+      result = await chrome.runtime.sendMessage({ type });
     } catch {
       showError('获取用量失败，请稍后重试');
       return;
