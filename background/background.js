@@ -1,620 +1,63 @@
-// MiniMax Token Monitor - Background Service Worker
+// MiniMax Token Monitor - Background Service Worker Entry Point
+//
+// Loads all modules via importScripts and registers MV3 event listeners.
+//
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ⚠️ MV3 REQUIREMENT:
+// importScripts() and chrome.* event listener registration MUST happen at
+// the top-level scope (not inside async functions or callbacks). The SW may
+// be terminated at any time; only top-level registrations are persisted.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// 导入纯工具函数 (lib/utils.js 是 UMD，浏览器/CJS 都可用)
-// 在 Service Worker 中通过 importScripts 加载
+// Load shared utilities first (formatNumber, daysUntil, calculateTokenStats, etc.)
+// then background modules in dependency order:
+//   config → storage → api → billing → badge → alarms → core
 try {
-  importScripts('../lib/utils.js');
+  importScripts(
+    '../lib/utils.js',
+    'config.js',
+    'storage.js',
+    'api.js',
+    'billing.js',
+    'badge.js',
+    'alarms.js',
+    'core.js'
+  );
 } catch (e) {
-  // 文件不存在或路径错误 — 保留 inline fallback
-  console.warn('Failed to importScripts lib/utils.js:', e);
+  console.warn('Failed to importScripts:', e);
 }
 
-const STORAGE_KEYS = {
-  API_KEY: 'minimax_api_key',
-  ENDPOINT: 'minimax_endpoint',
-  AUTO_REFRESH_INTERVAL: 'minimax_auto_refresh_interval',
-  AUTO_REFRESH_ENABLED: 'minimax_auto_refresh_enabled',
-  NOTIFICATIONS_ENABLED: 'minimax_notifications_enabled',
-  NOTIFY_THRESHOLD: 'minimax_notify_threshold',
-  NOTIFIED_WINDOW_KEYS: 'minimax_notified_window_keys',
-  HISTORY: 'minimax_usage_history',
-  LAST_USAGE: 'minimax_last_usage',
-  LAST_FETCH_AT: 'minimax_last_fetch_at',
-  LOGS: 'minimax_logs'
-};
-
-// 桌面通知默认阈值 (剩余% 低于此值时弹通知)
-const DEFAULT_NOTIFY_THRESHOLD = 10;
-// 通知去重保留的最近窗口 key 数量 (5h 窗口约每 5h 一次重置)
-const NOTIFIED_KEYS_LIMIT = 10;
-
-// 主用量刷新节流窗口 (毫秒)。SW 启动/alarms 触发时若距上次 fetch
-// 不足此间隔则直接返回缓存，避免免费多打 API。
-const USAGE_REFRESH_THROTTLE_MS = 60_000;
-// Token 账单 (消耗统计) 缓存有效期 — 30 分钟。
-// 账单页面变化慢，没必要跟主用量同步刷新。
-const BILLING_CACHE_TTL_MS = 30 * 60 * 1000;
-const BILLING_CACHE_KEY = 'minimax_billing_cache';
-
-const ENDPOINTS = {
-  china: {
-    name: '🇨🇳 China',
-    baseURL: 'https://www.minimaxi.com',
-    remainsPath: '/v1/api/openplatform/coding_plan/remains',
-    subscriptionPath: '/v1/api/openplatform/charge/combo/cycle_audio_resource_package?biz_line=2&cycle_type=1&resource_package_type=7',
-    billingPath: '/account/amount'
-  },
-  international: {
-    name: '🌏 International',
-    baseURL: 'https://api.minimax.io',
-    remainsPath: '/v1/api/openplatform/coding_plan/remains',
-    subscriptionPath: '/v1/api/openplatform/charge/combo/cycle_audio_resource_package?biz_line=2&cycle_type=1&resource_package_type=7',
-    billingPath: '/account/amount'
-  }
-};
-
-// 获取设置（API Key 从 local 读取，其余从 sync 读取）
-async function getSettings() {
-  const [syncResult, localResult] = await Promise.all([
-    chrome.storage.sync.get([
-      STORAGE_KEYS.ENDPOINT,
-      STORAGE_KEYS.AUTO_REFRESH_INTERVAL,
-      STORAGE_KEYS.AUTO_REFRESH_ENABLED,
-      STORAGE_KEYS.NOTIFICATIONS_ENABLED,
-      STORAGE_KEYS.NOTIFY_THRESHOLD
-    ]),
-    chrome.storage.local.get([STORAGE_KEYS.API_KEY])
-  ]);
-  return {
-    apiKey: localResult[STORAGE_KEYS.API_KEY] || '',
-    endpoint: syncResult[STORAGE_KEYS.ENDPOINT] || 'china',
-    autoRefreshInterval: syncResult[STORAGE_KEYS.AUTO_REFRESH_INTERVAL] || 60,
-    autoRefreshEnabled: syncResult[STORAGE_KEYS.AUTO_REFRESH_ENABLED] !== false,
-    notificationsEnabled: syncResult[STORAGE_KEYS.NOTIFICATIONS_ENABLED] !== false,
-    notifyThreshold: syncResult[STORAGE_KEYS.NOTIFY_THRESHOLD] ?? DEFAULT_NOTIFY_THRESHOLD,
-  };
-}
-
-// 保存设置（API Key 存 local，其余存 sync）
-async function saveSettings(settings) {
-  await Promise.all([
-    chrome.storage.sync.set({
-      [STORAGE_KEYS.ENDPOINT]: settings.endpoint || 'china',
-      [STORAGE_KEYS.AUTO_REFRESH_INTERVAL]: settings.autoRefreshInterval || 60,
-      [STORAGE_KEYS.AUTO_REFRESH_ENABLED]: settings.autoRefreshEnabled !== false,
-      [STORAGE_KEYS.NOTIFICATIONS_ENABLED]: settings.notificationsEnabled !== false,
-      [STORAGE_KEYS.NOTIFY_THRESHOLD]: settings.notifyThreshold ?? DEFAULT_NOTIFY_THRESHOLD,
-    }),
-    chrome.storage.local.set({
-      [STORAGE_KEYS.API_KEY]: settings.apiKey || ''
-    })
-  ]);
-}
-
-// 获取历史记录
-async function getHistory() {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.HISTORY);
-  return result[STORAGE_KEYS.HISTORY] || [];
-}
-
-// 保存历史记录（30 天过期 + 每天最多 24 条）
-async function saveHistory(history) {
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const fresh = history.filter(r => r.timestamp > cutoff);
-
-  const grouped = {};
-  fresh.forEach(r => {
-    const dayKey = new Date(r.timestamp).toDateString();
-    if (!grouped[dayKey]) grouped[dayKey] = [];
-    grouped[dayKey].push(r);
-  });
-
-  const limited = [];
-  Object.values(grouped).forEach(dayRecords => {
-    dayRecords.sort((a, b) => b.timestamp - a.timestamp);
-    limited.push(...dayRecords.slice(0, 24));
-  });
-  limited.sort((a, b) => b.timestamp - a.timestamp);
-
-  await chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: limited });
-}
-
-// 添加历史记录
-// 同一窗口（intervalResetTime 相同）只记录最早一条。
-// 自动刷新每分钟一次时会反复打到同一窗口，跳过冗余写入。
-async function addHistoryRecord(usage) {
-  const windowKey = usage.intervalResetTime || Date.now();
-  const { [STORAGE_KEYS.LAST_USAGE]: lastUsage } =
-    await chrome.storage.local.get(STORAGE_KEYS.LAST_USAGE);
-  if (lastUsage && lastUsage.intervalResetTime === windowKey) {
-    return;  // 同窗口，跳过
-  }
-
-  const history = await getHistory();
-  history.unshift({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    used: usage.intervalUsed,
-    remains: usage.intervalRemains,
-    total: usage.intervalTotal
-  });
-  await saveHistory(history);
-}
-
-// 日志相关
-async function getLogs() {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.LOGS);
-  return result[STORAGE_KEYS.LOGS] || [];
-}
-
-async function saveLogs(logs) {
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const filtered = logs.filter(r => r.timestamp > cutoff).slice(-200);
-  await chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: filtered });
-}
-
-async function addLog(type, message) {
-  const logs = await getLogs();
-  logs.unshift({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    type: type,
-    message: message
-  });
-  await saveLogs(logs);
-}
-
-// 通用带重试的 JSON GET。
-// 重试仅针对 network error / 5xx；4xx 立即放弃（API key 错/参数错重试无意义）。
-// maxAttempts = 1 表示不重试（默认 2 次重试 = 3 次总尝试）。
-async function fetchJsonWithRetry(url, headers, { timeoutMs = 10000, maxAttempts = 3, backoffMs = 500 } = {}) {
-  let lastErr = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        return await response.json();
-      }
-      // 4xx (除 408/429) 不重试
-      if (response.status >= 400 && response.status < 500
-          && response.status !== 408 && response.status !== 429) {
-        lastErr = new Error(`HTTP ${response.status}`);
-        break;
-      }
-      lastErr = new Error(`HTTP ${response.status}`);
-    } catch (e) {
-      clearTimeout(timeoutId);
-      lastErr = e;
-    }
-    if (attempt < maxAttempts) {
-      // 指数退避: 500ms, 1000ms, ...
-      await new Promise(r => setTimeout(r, backoffMs * Math.pow(2, attempt - 1)));
-    }
-  }
-  throw lastErr;
-}
-
-// 获取订阅信息
-async function fetchSubscription(apiKey, endpoint) {
-  try {
-    const url = endpoint.baseURL + endpoint.subscriptionPath;
-    const data = await fetchJsonWithRetry(url, {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    });
-    return data.current_subscribe || null;
-  } catch (error) {
-    return null;
-  }
-}
-
-// 获取所有账单记录（分页获取最多30天）
-async function fetchAllBillingRecords(apiKey, endpoint) {
-  const allRecords = [];
-  let page = 1;
-  const limit = 100;
-  const maxPages = 30;  // 最多30页，防止无限循环
-  const minStartTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const headers = {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  };
-
-  while (page <= maxPages) {
-    const url = `${endpoint.baseURL}${endpoint.billingPath}?page=${page}&limit=${limit}&aggregate=false`;
-    let data;
-    try {
-      data = await fetchJsonWithRetry(url, headers);
-    } catch (e) {
-      // 已重试 3 次仍失败：保留已收集的记录 (部分数据 > 完全无数据)
-      await addLog('warn', `账单分页 ${page} 获取失败 (${e.message})，返回已有 ${allRecords.length} 条`);
-      break;
-    }
-
-    const records = data.charge_records || [];
-    if (records.length === 0) break;
-
-    for (const r of records) {
-      const ts = r.created_at * 1000;
-      if (minStartTime && ts < minStartTime) return allRecords;
-      allRecords.push(r);
-    }
-
-    if (records.length < limit) break;
-    page++;
-  }
-
-  return allRecords;
-}
-
-// 计算 Token 消耗统计
-function calculateTokenStats(records) {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const sevenDaysAgo = now.getTime() - 7 * 86400000;
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-  let yesterdayTokens = 0;
-  let sevenDayTokens = 0;
-  let monthTokens = 0;
-
-  for (const r of records) {
-    const ts = r.created_at * 1000;
-    const token = Number(r.consume_token);
-
-    if (ts >= todayStart - 86400000 && ts < todayStart) {
-      yesterdayTokens += token;
-    }
-    if (ts >= sevenDaysAgo) {
-      sevenDayTokens += token;
-    }
-    if (ts >= monthStart) {
-      monthTokens += token;
-    }
-  }
-
-  return { yesterdayTokens, sevenDayTokens, monthTokens };
-}
-
-// 计算距离天数
-function daysUntil(date) {
-  if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
-    return null;
-  }
-  return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86400000));
-}
-
-// M3: 格式化相对时间倒计时（接受毫秒数）
-function formatResetCountdownMs(ms) {
-  if (!ms || ms <= 0) return '--';
-
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-
-  if (h > 0) {
-    return m > 0 ? `${h} 小时 ${m} 分钟后重置` : `${h} 小时后重置`;
-  }
-  return `${m} 分钟后重置`;
-}
-
-// 获取最新用量（适配 M3 Token Plan）
-// options:
-//   force: true  → 跳过节流，无视上次 fetch 时间
-//   includeBilling: true → 拉取并刷新 Token 账单（默认 false，用缓存）
-// 命中节流窗口时返回当前缓存，避免重复打 API。
-async function fetchUsage({ force = false, includeBilling = false } = {}) {
-  const settings = await getSettings();
-
-  if (!settings.apiKey) {
-    return { error: 'NO_API_KEY' };
-  }
-
-  // 节流：未传 force 且距上次 fetch < USAGE_REFRESH_THROTTLE_MS，直接返回缓存
-  if (!force) {
-    const cached = await getCachedUsage();
-    const throttleResult = await applyUsageThrottle(cached);
-    if (throttleResult) return throttleResult;
-  }
-
-  const endpoint = ENDPOINTS[settings.endpoint];
-  const url = endpoint.baseURL + endpoint.remainsPath;
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${settings.apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    const statusCode = data.base_resp?.status_code ?? data.code;
-    const statusMsg = data.base_resp?.status_msg ?? data.msg;
-    if (statusCode !== 0) {
-      throw new Error(statusMsg || 'API Error');
-    }
-
-    const models = data.model_remains || [];
-
-    if (models.length === 0) {
-      throw new Error('无模型数据');
-    }
-
-    // 分离主模型（MiniMax-M*）和其他模型
-    const mainModel = models.find(m => m.model_name?.startsWith('MiniMax-M'))
-      || models.find(m => m.current_interval_total_count > 0)
-      || models[0];
-
-    // M3 API 字段语义：
-    // - current_interval_usage_count = 已使用次数
-    // - current_interval_remaining_percent = 命名反向，实际是"已用%"（92 表示已用 92%）
-    // - 显示"剩余%" = 100 - remaining_percent
-    const intervalTotal = mainModel.current_interval_total_count || 0;
-    const intervalUsedCount = mainModel.current_interval_usage_count || 0;  // 已使用次数
-    const intervalRemains = intervalTotal - intervalUsedCount;  // 剩余次数 = 总数 - 已用
-
-    // M3: remaining_percent 命名反向，100 - remainingPct 才是真正的"剩余%"
-    const intervalRemainingPct = mainModel.current_interval_remaining_percent;
-    const intervalRemainingPercent = (intervalRemainingPct !== undefined && intervalRemainingPct !== null)
-      ? Math.round(100 - intervalRemainingPct)  // 反转：remaining_percent=92 表示已用 92%，剩余 8%
-      : (intervalTotal > 0 ? Math.round((intervalRemains / intervalTotal) * 100) : null);
-
-    // M3: remains_time 是相对时间（毫秒），需要计算绝对时间
-    const intervalResetMs = mainModel.remains_time || 0;
-    const intervalResetTime = intervalResetMs > 0 ? Date.now() + intervalResetMs : null;
-
-    // M3 新增：时间窗口
-    const startTime = mainModel.start_time || null;
-    const endTime = mainModel.end_time || null;
-
-    // 周限额
-    const weeklyTotal = mainModel.current_weekly_total_count || 0;
-    const weeklyUsedCount = mainModel.current_weekly_usage_count || 0;  // 已使用次数
-    const weeklyRemains = weeklyTotal - weeklyUsedCount;  // 剩余次数
-
-    // M3: weekly_remaining_percent 同样需要反转
-    const weeklyRemainingPct = mainModel.current_weekly_remaining_percent;
-    const weeklyRemainingPercent = (weeklyRemainingPct !== undefined && weeklyRemainingPct !== null)
-      ? Math.round(100 - weeklyRemainingPct)  // 反转
-      : (weeklyTotal > 0 ? Math.round((weeklyRemains / weeklyTotal) * 100) : null);
-
-    // M3: weekly_remains_time 是相对时间（毫秒）
-    const weeklyResetMs = mainModel.weekly_remains_time || 0;
-    const weeklyResetTime = weeklyResetMs > 0 ? Date.now() + weeklyResetMs : null;
-
-    // 获取订阅信息（每次都拉，~kbps 级数据）；账单按需拉取并缓存。
-    let subscription = null;
-    let billingRecords = [];
-
-    try {
-      const results = await Promise.allSettled([
-        fetchSubscription(settings.apiKey, endpoint),
-        includeBilling
-          ? fetchAndCacheBilling(settings.apiKey, endpoint)
-          : loadCachedBilling()
-      ]);
-
-      if (results[0].status === 'fulfilled' && results[0].value) {
-        subscription = results[0].value;
-      }
-
-      if (results[1].status === 'fulfilled') {
-        billingRecords = results[1].value;
-      }
-    } catch {
-      // 静默失败，不影响主要功能
-    }
-
-    const tokenStats = calculateTokenStats(billingRecords);
-
-    const usage = {
-      // 5小时窗口配额
-      intervalUsed: intervalUsedCount,  // 已使用次数
-      intervalRemains,                  // 剩余次数
-      intervalTotal,                    // 总次数
-      intervalRemainingPercent,         // M3: 剩余百分比（已反转）
-      intervalResetTime,
-      intervalResetMs,                  // M3: 重置倒计时（毫秒）
-
-      // 时间窗口（M3 新增）
-      windowStartTime: startTime,
-      windowEndTime: endTime,
-
-      // 周限额
-      weeklyUsed: weeklyUsedCount,      // 已使用次数
-      weeklyRemains,                    // 剩余次数
-      weeklyTotal,                      // 总次数
-      weeklyRemainingPercent,           // M3: 剩余百分比（已反转）
-      weeklyResetTime,
-      weeklyResetMs,                    // M3: 重置倒计时（毫秒）
-
-      // Token 消耗统计
-      tokenStats: {
-        yesterday: tokenStats.yesterdayTokens,
-        sevenDay: tokenStats.sevenDayTokens,
-        month: tokenStats.monthTokens
-      },
-
-      // 订阅信息
-      subscription: subscription ? {
-        endTime: subscription.current_subscribe_end_time,
-        creditReloadTime: subscription.current_credit_reload_time,
-        daysUntilEnd: daysUntil(new Date(subscription.current_subscribe_end_time))
-      } : null,
-
-      // 格式化后的重置时间字符串
-      intervalResetTimeStr: formatResetCountdownMs(intervalResetMs),
-      weeklyResetTimeStr: formatResetCountdownMs(weeklyResetMs)
-    };
-
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.LAST_USAGE]: usage,
-      [STORAGE_KEYS.LAST_FETCH_AT]: Date.now()
-    });
-    await addHistoryRecord(usage);
-    await addLog('success', `获取用量成功 — 剩余 ${intervalRemains} / 总计 ${intervalTotal} (${intervalRemainingPercent ?? '--'}%)`);
-    updateBadge(usage);
-    await maybeNotifyLowUsage(usage);
-
-    return usage;
-  } catch (error) {
-    await addLog('error', `获取用量失败: ${error.message}`);
-    return { error: error.message || 'NETWORK_ERROR' };
-  }
-}
-
-// 更新扩展图标 badge（M3: 显示剩余%，颜色逻辑反转）
-function updateBadge(usage) {
-  if (!usage || usage.error) {
-    chrome.action.setBadgeText({ text: '!' });
-    chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
-  } else {
-    // M3: 使用 remaining_percent（剩余百分比）
-    const remainingPct = usage.intervalRemainingPercent ?? (
-      usage.intervalTotal > 0 ? Math.round((usage.intervalRemains / usage.intervalTotal) * 100) : 0
-    );
-    chrome.action.setBadgeText({ text: remainingPct + '%' });
-
-    // M3 颜色逻辑：剩得多绿色，剩得少红色
-    if (remainingPct >= 60) {
-      chrome.action.setBadgeBackgroundColor({ color: '#00d09c' });
-    } else if (remainingPct >= 30) {
-      chrome.action.setBadgeBackgroundColor({ color: '#fdcb6e' });
-    } else {
-      chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
-    }
-  }
-}
-
-// 桌面通知：当剩余% 低于阈值时弹通知。
-// 同窗口 (intervalResetTime) 内只通知一次，避免每分钟自动刷新时刷屏。
-// 注意：chrome.notifications 需要 user gesture 或在回调内首次调用
-// 才能获得 permission。这里假设用户已安装扩展即隐式授权 (manifest
-// 声明 notifications 权限)。若运行时报 not allowed 则静默失败。
-async function maybeNotifyLowUsage(usage) {
-  try {
-    const { [STORAGE_KEYS.NOTIFICATIONS_ENABLED]: notifEnabled,
-            [STORAGE_KEYS.NOTIFY_THRESHOLD]: threshold,
-            [STORAGE_KEYS.NOTIFIED_WINDOW_KEYS]: notifiedRaw = [] } =
-      await chrome.storage.sync.get([
-        STORAGE_KEYS.NOTIFICATIONS_ENABLED,
-        STORAGE_KEYS.NOTIFY_THRESHOLD,
-        STORAGE_KEYS.NOTIFIED_WINDOW_KEYS
-      ]);
-
-    // 默认开启通知
-    if (notifEnabled === false) return;
-
-    const remainingPct = usage.intervalRemainingPercent ?? (
-      usage.intervalTotal > 0 ? Math.round((usage.intervalRemains / usage.intervalTotal) * 100) : 0
-    );
-    const limit = typeof threshold === 'number' ? threshold : DEFAULT_NOTIFY_THRESHOLD;
-    if (remainingPct > limit) return;
-
-    const windowKey = usage.intervalResetTime || String(usage.intervalRemains);
-    const notified = Array.isArray(notifiedRaw) ? notifiedRaw : [];
-    if (notified.includes(windowKey)) return;  // 同窗口已通知过
-
-    await chrome.notifications.create(`low-usage-${windowKey}`, {
-      type: 'basic',
-      iconUrl: 'icons/icon128.png',
-      title: '用量提醒',
-      message: `5 小时配额剩余 ${remainingPct}%，请注意用量`,
-      priority: 2,
-    });
-
-    const updatedNotified = [...notified, windowKey].slice(-NOTIFIED_KEYS_LIMIT);
-    await chrome.storage.sync.set({ [STORAGE_KEYS.NOTIFIED_WINDOW_KEYS]: updatedNotified });
-  } catch (e) {
-    // notifications 权限未授予等异常 — 静默失败，不影响主流程
-    await addLog('warn', `通知发送失败: ${e.message}`);
-  }
-}
-
-// 自动刷新：使用 chrome.alarms（MV3 持久化，最小间隔 1 分钟）
-async function startAutoRefresh() {
-  await chrome.alarms.clear('autoRefresh');
-  const settings = await getSettings();
-  if (!settings.autoRefreshEnabled || !settings.apiKey) return;
-
-  // MV3 chrome.alarms 不支持 < 1 分钟，统一向下取整到分钟
-  const periodInMinutes = Math.max(1, Math.round(settings.autoRefreshInterval / 60));
-  chrome.alarms.create('autoRefresh', { periodInMinutes });
-}
-
-async function stopAutoRefresh() {
-  await chrome.alarms.clear('autoRefresh');
-}
-
+// ─── Event listeners (top-level registration for MV3) ────────────────────
+
+/**
+ * Auto-refresh alarm handler.
+ *
+ * [Task-7] IMPROVEMENT: Automatically includes billing refresh when the
+ * billing cache is expired (≈every 30 min). Previously, auto-refresh never
+ * fetched billing data, leaving Token consumption stats stale until the
+ * user manually triggered a refresh.
+ */
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'autoRefresh') {
-    await fetchUsage({ includeBilling: false });
+    // Check if billing cache is expired — include billing fetch if so
+    const { [BILLING_CACHE_KEY]: billingCache } =
+      await chrome.storage.local.get(BILLING_CACHE_KEY);
+    const includeBilling = !billingCache
+      || !billingCache.records || billingCache.records.length === 0
+      || Date.now() - (billingCache.fetchedAt || 0) > BILLING_CACHE_TTL_MS;
+
+    await fetchUsage({ includeBilling });
     chrome.runtime.sendMessage({ type: 'USAGE_UPDATED' }).catch(() => {});
   }
 });
 
-// 监听消息
-// 获取缓存的用量数据
-async function getCachedUsage() {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.LAST_USAGE);
-  return result[STORAGE_KEYS.LAST_USAGE] || null;
-}
-
-// 主用量节流：返回 null 表示需要实际 fetch；返回对象表示命中节流直接用。
-async function applyUsageThrottle(cached) {
-  if (!cached) return null;
-  const { [STORAGE_KEYS.LAST_FETCH_AT]: lastFetchAt } =
-    await chrome.storage.local.get(STORAGE_KEYS.LAST_FETCH_AT);
-  if (!lastFetchAt) return null;
-  if (Date.now() - lastFetchAt < USAGE_REFRESH_THROTTLE_MS) {
-    return cached;
-  }
-  return null;
-}
-
-// 账单缓存读取。返回 { records, fetchedAt }；过期则视为空（调用方应显式 force 拉取）。
-async function loadCachedBilling() {
-  const { [BILLING_CACHE_KEY]: cache } =
-    await chrome.storage.local.get(BILLING_CACHE_KEY);
-  if (!cache || !cache.records) return [];
-  if (Date.now() - (cache.fetchedAt || 0) > BILLING_CACHE_TTL_MS) {
-    return [];  // 过期 — 调用方需要重新 force 拉取
-  }
-  return cache.records;
-}
-
-async function fetchAndCacheBilling(apiKey, endpoint) {
-  const records = await fetchAllBillingRecords(apiKey, endpoint);
-  await chrome.storage.local.set({
-    [BILLING_CACHE_KEY]: { records, fetchedAt: Date.now() }
-  });
-  return records;
-}
-
+/**
+ * Message handler (popup → background communication).
+ * Returns true for async sendResponse (keeps message channel open).
+ */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'GET_USAGE':
-      // 返回缓存数据，不主动刷新
       getCachedUsage().then(sendResponse);
       return true;
     case 'GET_SETTINGS':
@@ -642,7 +85,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       startAutoRefresh().then(sendResponse);
       return true;
     case 'REFRESH_BILLING':
-      // 强制拉取账单 (Token 消耗统计)，更新缓存后返回最新 records
       (async () => {
         const settings = await getSettings();
         if (!settings.apiKey) {
@@ -651,9 +93,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         try {
           const endpoint = ENDPOINTS[settings.endpoint];
-          const records = await fetchAndCacheBilling(settings.apiKey, endpoint);
-          const tokenStats = calculateTokenStats(records);
-          sendResponse({ records, tokenStats });
+          const [records, totalTokens] = await Promise.all([
+            fetchAndCacheBilling(settings.apiKey, endpoint),
+            fetchTotalTokens(settings.apiKey, endpoint),
+          ]);
+          const tokenStats = calculateTokenStats(records, undefined, totalTokens);
+          sendResponse({ records, tokenStats, totalTokens });
         } catch (e) {
           sendResponse({ error: e.message || 'NETWORK_ERROR', records: [] });
         }
@@ -662,16 +107,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 初始化
+// ─── Initialization ──────────────────────────────────────────────────────
+
+/**
+ * [Task-7] IMPROVED: On SW restart with cached data, if billing cache is
+ * expired/empty, proactively fetch billing data so Token stats are available
+ * when the user opens the popup (instead of showing stale/empty data).
+ */
 (async () => {
   const settings = await getSettings();
   if (!settings.apiKey) return;
 
-  // 仅在无缓存时主动 fetch，避免 SW 唤醒后立刻打 API。
-  // 有缓存时交给 chrome.alarms 调度，下一次闹钟自然更新。
   const cached = await getCachedUsage();
   if (!cached) {
+    // First install: fetch everything including billing
     await fetchUsage({ includeBilling: true });
+  } else {
+    // SW restart with cache: proactively refresh billing if expired
+    const billingRecords = await loadCachedBilling();
+    if (billingRecords.length === 0) {
+      // Billing cache empty/expired — non-blocking proactive fetch
+      fetchUsage({ includeBilling: true }).catch(() => {});
+    }
   }
   await startAutoRefresh();
 })();

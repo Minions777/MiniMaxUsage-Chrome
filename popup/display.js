@@ -87,7 +87,7 @@
   const RING_RADIUS = 50;
   const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-  function paintRing(svgEl, percentEl, textShadowEl, remainingPct, isWeekly) {
+  function paintRing(svgEl, percentEl, remainingPct, isWeekly) {
     const offset = RING_CIRCUMFERENCE * (1 - remainingPct);
     const colorInfo = colorForPercentage(remainingPct, isWeekly);
 
@@ -113,32 +113,31 @@
       ? usage.intervalRemainingPercent / 100
       : (total > 0 ? usage.intervalRemains / total : 0);
 
-    paintRing(dom.ringProgress, dom.ringPercent, null, remainingPct, false);
-    dom.statUsed.textContent = formatNumber(usage.intervalRemains);
-    dom.statTotal.textContent = formatNumber(total);
+    paintRing(dom.ringProgress, dom.ringPercent, remainingPct, false);
 
     // Weekly ring
     const weeklyRemainingPct = usage.weeklyRemainingPercent != null
       ? usage.weeklyRemainingPercent / 100
       : (usage.weeklyTotal > 0 ? usage.weeklyRemains / usage.weeklyTotal : 0);
 
-    paintRing(dom.weeklyRingProgress, dom.weeklyRingPercent, null, weeklyRemainingPct, true);
-    dom.statWeeklyRemains.textContent = formatNumber(usage.weeklyRemains);
-    dom.statWeeklyTotal.textContent = formatNumber(usage.weeklyTotal);
-    dom.statWeeklyRemainsCard.textContent = formatNumber(usage.weeklyRemains);
+    paintRing(dom.weeklyRingProgress, dom.weeklyRingPercent, weeklyRemainingPct, true);
 
     // Reset time
     dom.intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
 
-    // Token stats
+    // Token stats (including new period + total from VSCode extension reference)
     if (usage.tokenStats) {
       dom.statYesterday.textContent = formatTokensCN(usage.tokenStats.yesterday);
       dom.statSevenDay.textContent = formatTokensCN(usage.tokenStats.sevenDay);
       dom.statMonth.textContent = formatTokensCN(usage.tokenStats.month);
+      dom.statPeriod.textContent = formatTokensCN(usage.tokenStats.period);
+      dom.statTotalTokens.textContent = formatTokensCN(usage.tokenStats.total);
     } else {
       dom.statYesterday.textContent = '--';
       dom.statSevenDay.textContent = '--';
       dom.statMonth.textContent = '--';
+      dom.statPeriod.textContent = '--';
+      dom.statTotalTokens.textContent = '--';
     }
 
     // Subscription expiry

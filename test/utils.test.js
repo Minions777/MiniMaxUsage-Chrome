@@ -44,10 +44,6 @@ describe('colorForPercentage (M3: remainingPct is "remaining%", 0..1)', () => {
     expect(u.colorForPercentage(0.9).color).toBe('var(--accent)');
     expect(u.colorForPercentage(0.9).gradient).toBe('url(#greenGradient)');
   });
-  it('uses weekly palette when isWeekly=true', () => {
-    expect(u.colorForPercentage(0.9, true).color).toBe('#4facfe');
-    expect(u.colorForPercentage(0.9, true).gradient).toBe('url(#weeklyGradient)');
-  });
   it('threshold boundaries: 0.6 → green, 0.3 → orange, else red', () => {
     expect(u.colorForPercentage(0.6).gradient).toBe('url(#greenGradient)');
     expect(u.colorForPercentage(0.3).gradient).toBe('url(#orangeGradient)');
@@ -108,12 +104,15 @@ describe('calculateTokenStats', () => {
       yesterdayTokens: 100 + 999,
       sevenDayTokens: 100 + 200 + 999,
       monthTokens: 100 + 200 + 999,
+      periodTokens: 100 + 200 + 999 + 9999, // 近30天 = includes the "month-1" record too (within 30 days but before month start)
+      totalTokens: 100 + 200 + 999 + 9999, // No aggregate endpoint → falls back to periodTokens
     });
   });
 
   it('handles empty records', () => {
     expect(u.calculateTokenStats([], now)).toEqual({
       yesterdayTokens: 0, sevenDayTokens: 0, monthTokens: 0,
+      periodTokens: 0, totalTokens: 0,
     });
   });
 

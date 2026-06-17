@@ -28,7 +28,7 @@
 
 body {
   width: 380px;
-  height: 440px;
+  height: 470px;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI Variable', Roboto, sans-serif;
   background: linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-primary) 50%, var(--bg-secondary) 100%);
   background-attachment: fixed;
@@ -140,7 +140,7 @@ body::before {
 /* Info Cards */
 .info-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   margin-bottom: 16px;
 }
@@ -183,9 +183,9 @@ body::before {
 
 /* Token Stats */
 .token-stats { display: flex; justify-content: space-around; background: var(--glass-bg); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 14px 16px; }
-.token-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.token-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
 .token-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
-.token-value { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.token-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 
 /* Refresh Indicator */
 .refresh-indicator { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px; color: var(--text-muted); padding: 8px 0; margin-top: auto; }

@@ -44,14 +44,32 @@
 MiniMaxUsage-Chrome/
 ├── manifest.json          # 插件配置 (Manifest V3)
 ├── background/
-│   └── background.js      # Service Worker（API 请求 + 自动刷新 + 存储）
+│   ├── background.js      # Service Worker 入口 (importScripts + 事件监听 + 初始化)
+│   ├── config.js          # 常量定义 (STORAGE_KEYS, ENDPOINTS, 缓存 TTL 等)
+│   ├── storage.js         # Chrome Storage 读写 (设置/历史/日志/缓存/节流)
+│   ├── api.js             # API 网络请求 (带重试 fetch + 账单分页)
+│   ├── billing.js         # 账单缓存逻辑 (TTL 过期 + 刷新)
+│   ├── badge.js           # 图标 Badge + 低用量桌面通知
+│   ├── alarms.js          # 自动刷新调度 (chrome.alarms)
+│   └── core.js            # 主用量获取协调 (fetchUsage)
 ├── popup/
 │   ├── popup.html         # 弹出窗口界面
 │   ├── popup.css          # 样式 (CSS 变量主题系统)
-│   ├── popup.js           # 交互逻辑
-│   └── themes.js          # 主题系统 (5 种主题)
+│   ├── themes.js          # 主题系统 (5 种主题, PMM.theme namespace)
+│   ├── state.js           # 共享状态 + DOM 缓存 (PMM.state / PMM.dom)
+│   ├── display.js         # 用量渲染 + 面板切换 (PMM.display)
+│   ├── main.js            # 入口 (初始化 + 事件绑定)
+│   └── panels/
+│       ├── settings.js    # 设置面板 (API Key/端点/刷新/通知)
+│       ├── history.js     # 历史面板 (柱状图 + 日期明细)
+│       └── log.js         # 日志面板 (操作日志列表)
+├── lib/
+│   └── utils.js           # 纯工具函数 (UMD, Node/浏览器/SW 三端共用)
 ├── icons/                 # 插件图标
-└── README.md
+├── test/
+│   ├── utils.test.js      # 工具函数单元测试 (23 tests)
+│   ├── background-logic.test.js  # 后台逻辑决策测试 (25 tests)
+└── vitest.config.js       # 测试配置
 ```
 
 ---
@@ -189,8 +207,27 @@ const STORAGE_KEYS = {
 ## 📌 后续优化方向
 
 - [ ] 发布到 Chrome Web Store
-- [ ] 支持桌面通知（额度即将用尽时提醒）
 - [ ] 快捷键支持
 - [ ] 多账号管理
 - [ ] 多模型用量明细显示
-- [ ] 订阅到期提醒
+
+---
+
+## 🔧 已完成的优化 (v1.0.0)
+
+### 架构改进
+- ✅ **background.js 模块化拆分** — 从 677 行单文件拆分为 7 个职责明确的模块 (config/storage/api/billing/badge/alarms/core)，通过 importScripts 加载
+- ✅ **Popup namespace 整理** — themes.js 函数从 `window` 全局收归到 `PMM.theme` namespace，消除全局污染
+- ✅ **冗余文件清理** — 删除空的 `popup/util.js`，所有工具函数统一走 `lib/utils.js`
+
+### 稳定性改进
+- ✅ **历史去重策略增强** — 使用 `windowStartTime`(API 返回的窗口起始时间) 作为去重 key，比 `intervalResetTime`(计算值) 更稳定；独立 `LAST_WINDOW_KEY` 存储去重状态，与 `LAST_USAGE` 解耦
+- ✅ **账单缓存自动刷新** — auto-refresh alarm 自动检查账单缓存 TTL，过期时自动拉取；SW 重启时也主动刷新过期缓存，避免 popup 首次打开显示空的 Token 统计
+- ✅ **空数组 billing 判断修复** — `![]` 在 JS 中为 false，修正为 `records.length === 0` 确保空账单缓存能触发刷新
+
+### 文档与可维护性
+- ✅ **M3 API 语义反转醒目标注** — 在 core.js/badge.js/utils.js 中添加 `⚠️⚠️⚠️` 级别警告，明确标注 `remaining_percent` 字段的语义反转
+- ✅ **测试覆盖增加** — 从 8 个测试扩展到 48 个，新增 25 个后台逻辑决策测试 (去重 key 选择、缓存过期判断、重试策略、Badge 颜色、M3 反转验证)
+
+### 消除冗余
+- ✅ **background.js 重复函数清理** — `daysUntil`/`formatResetCountdownMs`/`calculateTokenStats` 在 background.js 和 lib/utils.js 中重复定义，拆分后统一使用 lib/utils.js 版本

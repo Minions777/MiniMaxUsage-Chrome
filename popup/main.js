@@ -12,8 +12,8 @@
     display.showLoading();
 
     // Theme first to avoid color flash
-    state.currentTheme = await getTheme();
-    window.applyTheme(state.currentTheme);
+    state.currentTheme = await window.PMM.theme.getTheme();
+    window.PMM.theme.applyTheme(state.currentTheme);
     // Pre-fill settings form before panels bind so default values reflect if user
     // opens settings without ever having saved anything.
     window.PMM.settingsPanel.applySettingsToUI({ endpoint: 'china', autoRefreshEnabled: true, autoRefreshInterval: 60 });

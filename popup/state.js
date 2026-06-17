@@ -39,21 +39,18 @@
       // 5h ring
       ringProgress: get('ringProgress'),
       ringPercent: get('ringPercent'),
-      statUsed: get('statUsed'),
-      statTotal: get('statTotal'),
       intervalResetTime: get('intervalResetTime'),
 
       // Weekly ring
       weeklyRingProgress: get('weeklyRingProgress'),
       weeklyRingPercent: get('weeklyRingPercent'),
-      statWeeklyRemains: get('statWeeklyRemains'),
-      statWeeklyTotal: get('statWeeklyTotal'),
-      statWeeklyRemainsCard: get('statWeeklyRemainsCard'),
 
       // Token stats
       statYesterday: get('statYesterday'),
       statSevenDay: get('statSevenDay'),
       statMonth: get('statMonth'),
+      statPeriod: get('statPeriod'),
+      statTotalTokens: get('statTotalTokens'),
 
       // Subscription
       subscriptionGroup: get('subscriptionGroup'),

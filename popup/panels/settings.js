@@ -84,9 +84,9 @@
       option.addEventListener('click', () => {
         const themeId = option.dataset.theme;
         state.currentTheme = themeId;
-        window.applyTheme(themeId);
-        updateThemeUI(themeId);
-        window.saveTheme(themeId);
+        window.PMM.theme.applyTheme(themeId);
+        window.PMM.theme.updateThemeUI(themeId);
+        window.PMM.theme.saveTheme(themeId);
       });
     });
 
@@ -97,11 +97,6 @@
     document.getElementById('btnSaveSettings').addEventListener('click', save);
   }
 
-  function updateThemeUI(themeId) {
-    document.querySelectorAll('.theme-option').forEach(opt => {
-      opt.classList.toggle('selected', opt.dataset.theme === themeId);
-    });
-  }
-
+  // updateThemeUI is now under PMM.theme — removed local duplicate
   window.PMM.settingsPanel = { applySettingsToUI, bind };
 })();
