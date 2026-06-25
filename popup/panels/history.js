@@ -115,22 +115,34 @@
 
   function bind() {
     initDom();
-    document.getElementById('btnBackFromHistory').addEventListener('click', () => {
-      window.PMM.display.showMain();
-    });
-    document.getElementById('btnClearHistory').addEventListener('click', async () => {
-      if (confirm('确定清空所有历史记录？')) {
-        await chrome.runtime.sendMessage({ type: 'CLEAR_HISTORY' });
-        load();
-      }
-    });
+    const btnBack = document.getElementById('btnBackFromHistory');
+    if (btnBack) {
+      btnBack.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.PMM.display && window.PMM.display.showMain) {
+          window.PMM.display.showMain();
+        }
+      });
+    }
+    const btnClear = document.getElementById('btnClearHistory');
+    if (btnClear) {
+      btnClear.addEventListener('click', async () => {
+        if (confirm('确定清空所有历史记录？')) {
+          await chrome.runtime.sendMessage({ type: 'CLEAR_HISTORY' });
+          load();
+        }
+      });
+    }
     // Event delegation for day expand/collapse
-    dom.historyList.addEventListener('click', (e) => {
-      const header = e.target.closest('.history-day-header');
-      if (!header) return;
-      const detail = header.parentElement.querySelector('.history-day-detail');
-      if (detail) detail.classList.toggle('show');
-    });
+    if (dom.historyList) {
+      dom.historyList.addEventListener('click', (e) => {
+        const header = e.target.closest('.history-day-header');
+        if (!header) return;
+        const detail = header.parentElement.querySelector('.history-day-detail');
+        if (detail) detail.classList.toggle('show');
+      });
+    }
   }
 
   window.PMM.historyPanel = { load, bind };

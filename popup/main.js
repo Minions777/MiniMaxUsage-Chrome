@@ -53,30 +53,54 @@
     window.PMM.logPanel.bind();
 
     // Header buttons
-    document.getElementById('btnRefresh').addEventListener('click', async () => {
-      if (state.isRefreshing) return;
-      state.isRefreshing = true;
-      const btn = document.getElementById('btnRefresh');
-      btn.classList.add('spinning');
-      try {
-        await display.refreshUsageDisplay(true);
-      } finally {
-        btn.classList.remove('spinning');
-        state.isRefreshing = false;
-      }
-    });
-    document.getElementById('btnSettings').addEventListener('click', () => {
-      window.PMM.settingsPanel.applySettingsToUI(state.currentSettings);
-      display.showSettings();
-    });
-    document.getElementById('btnHistory').addEventListener('click', () => display.showHistory());
-    document.getElementById('btnLog').addEventListener('click', () => display.showLogPanel());
-    document.getElementById('btnGoSettings').addEventListener('click', () => {
-      window.PMM.settingsPanel.applySettingsToUI(state.currentSettings);
-      display.showSettings();
-    });
-    document.getElementById('btnRetry').addEventListener('click', () => display.refreshUsageDisplay(true));
-    document.getElementById('btnViewLog').addEventListener('click', () => display.showLogPanel());
+    const btnRefresh = document.getElementById('btnRefresh');
+    if (btnRefresh) {
+      btnRefresh.addEventListener('click', async () => {
+        if (state.isRefreshing) return;
+        state.isRefreshing = true;
+        btnRefresh.classList.add('spinning');
+        try {
+          await display.refreshUsageDisplay(true);
+        } finally {
+          btnRefresh.classList.remove('spinning');
+          state.isRefreshing = false;
+        }
+      });
+    }
+    const btnSettings = document.getElementById('btnSettings');
+    if (btnSettings) {
+      btnSettings.addEventListener('click', () => {
+        if (window.PMM.settingsPanel && window.PMM.settingsPanel.applySettingsToUI) {
+          window.PMM.settingsPanel.applySettingsToUI(state.currentSettings);
+        }
+        display.showSettings();
+      });
+    }
+    const btnHistory = document.getElementById('btnHistory');
+    if (btnHistory) {
+      btnHistory.addEventListener('click', () => display.showHistory());
+    }
+    const btnLog = document.getElementById('btnLog');
+    if (btnLog) {
+      btnLog.addEventListener('click', () => display.showLogPanel());
+    }
+    const btnGoSettings = document.getElementById('btnGoSettings');
+    if (btnGoSettings) {
+      btnGoSettings.addEventListener('click', () => {
+        if (window.PMM.settingsPanel && window.PMM.settingsPanel.applySettingsToUI) {
+          window.PMM.settingsPanel.applySettingsToUI(state.currentSettings);
+        }
+        display.showSettings();
+      });
+    }
+    const btnRetry = document.getElementById('btnRetry');
+    if (btnRetry) {
+      btnRetry.addEventListener('click', () => display.refreshUsageDisplay(true));
+    }
+    const btnViewLog = document.getElementById('btnViewLog');
+    if (btnViewLog) {
+      btnViewLog.addEventListener('click', () => display.showLogPanel());
+    }
 
     init();
   });

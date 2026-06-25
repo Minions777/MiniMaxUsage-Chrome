@@ -90,11 +90,23 @@
       });
     });
 
-    document.getElementById('btnBackFromSettings').addEventListener('click', async () => {
-      await display.refreshUsageDisplay();
-      display.showMain();
-    });
-    document.getElementById('btnSaveSettings').addEventListener('click', save);
+    const btnBackSettings = document.getElementById('btnBackFromSettings');
+    if (btnBackSettings) {
+      btnBackSettings.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (display && display.refreshUsageDisplay) {
+          await display.refreshUsageDisplay();
+        }
+        if (display && display.showMain) {
+          display.showMain();
+        }
+      });
+    }
+    const btnSaveSettings = document.getElementById('btnSaveSettings');
+    if (btnSaveSettings) {
+      btnSaveSettings.addEventListener('click', save);
+    }
   }
 
   // updateThemeUI is now under PMM.theme — removed local duplicate

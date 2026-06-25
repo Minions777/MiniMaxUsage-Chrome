@@ -45,15 +45,25 @@
 
   function bind() {
     initDom();
-    document.getElementById('btnBackFromLog').addEventListener('click', () => {
-      window.PMM.display.showMain();
-    });
-    document.getElementById('btnClearLog').addEventListener('click', async () => {
-      if (confirm('确定清空所有日志？')) {
-        await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
-        load();
-      }
-    });
+    const btnBack = document.getElementById('btnBackFromLog');
+    if (btnBack) {
+      btnBack.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.PMM.display && window.PMM.display.showMain) {
+          window.PMM.display.showMain();
+        }
+      });
+    }
+    const btnClear = document.getElementById('btnClearLog');
+    if (btnClear) {
+      btnClear.addEventListener('click', async () => {
+        if (confirm('确定清空所有日志？')) {
+          await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
+          load();
+        }
+      });
+    }
   }
 
   window.PMM.logPanel = { load, bind };
