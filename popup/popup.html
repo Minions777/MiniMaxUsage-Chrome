@@ -184,34 +184,34 @@
         <div class="field">
           <label>主题外观</label>
           <div class="theme-grid" id="themeGrid">
-            <div class="theme-option" data-theme="neon">
+            <button type="button" class="theme-option" data-theme="neon" aria-pressed="false">
               <div class="theme-preview" style="background: linear-gradient(135deg,#00d09c,#00b894)"></div>
               <span class="theme-name">Neon绿</span>
-            </div>
-            <div class="theme-option" data-theme="ocean">
+            </button>
+            <button type="button" class="theme-option" data-theme="ocean" aria-pressed="false">
               <div class="theme-preview" style="background: linear-gradient(135deg,#00b4ff,#0066cc)"></div>
               <span class="theme-name">海洋蓝</span>
-            </div>
-            <div class="theme-option" data-theme="sunset">
+            </button>
+            <button type="button" class="theme-option" data-theme="sunset" aria-pressed="false">
               <div class="theme-preview" style="background: linear-gradient(135deg,#ff8c42,#ff5252)"></div>
               <span class="theme-name">日落橙</span>
-            </div>
-            <div class="theme-option" data-theme="purple">
+            </button>
+            <button type="button" class="theme-option" data-theme="purple" aria-pressed="false">
               <div class="theme-preview" style="background: linear-gradient(135deg,#a855f7,#7c3aed)"></div>
               <span class="theme-name">紫色</span>
-            </div>
-            <div class="theme-option" data-theme="mono">
+            </button>
+            <button type="button" class="theme-option" data-theme="mono" aria-pressed="false">
               <div class="theme-preview" style="background: linear-gradient(135deg,#e0e0e0,#888888)"></div>
               <span class="theme-name">简约</span>
-            </div>
+            </button>
           </div>
         </div>
         <!-- API Key -->
         <div class="field">
-          <label>API Key</label>
+          <label for="inputAPIKey">API Key</label>
           <div class="input-group">
             <input type="password" id="inputAPIKey" placeholder="输入你的 MiniMax API Key">
-            <button class="btn-eye" id="btnToggleKey">👁</button>
+            <button class="btn-eye" id="btnToggleKey" aria-label="显示/隐藏 API Key">👁</button>
           </div>
         </div>
         <!-- Endpoint -->
@@ -259,7 +259,7 @@
             </label>
           </div>
           <div class="threshold-row">
-            <span class="threshold-label">阈值（剩余%）</span>
+            <label for="inputNotifyThreshold" class="threshold-label">阈值（剩余%）</label>
             <input type="number" id="inputNotifyThreshold" min="1" max="50" step="1" value="10" class="threshold-input">
           </div>
         </div>
@@ -318,12 +318,25 @@
         <div class="log-list" id="logList"></div>
       </div>
     </div>
+
+    <!-- Themed confirmation modal (replaces blocking native confirm()) -->
+    <div class="modal-overlay" id="confirmModal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <div class="modal-card">
+        <div class="modal-title" id="confirmModalTitle">确认操作</div>
+        <div class="modal-body" id="confirmModalBody">确定？</div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="btnConfirmCancel">取消</button>
+          <button type="button" class="btn-primary" id="btnConfirmOk">确定</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="themes.js"></script>
   <script src="../lib/utils.js"></script>
   <script src="state.js"></script>
   <script src="display.js"></script>
+  <script src="confirm.js"></script>
   <script src="panels/settings.js"></script>
   <script src="panels/history.js"></script>
   <script src="panels/log.js"></script>

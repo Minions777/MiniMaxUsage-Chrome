@@ -8,6 +8,15 @@
   const { formatNumber, formatTime, formatTokensCN, colorForPercentage } = window.PMM.util;
 
   // ─── Panel switching ──────────────────────────────────────────────────────
+  // Each show*() moves keyboard focus into the revealed panel's back button so
+  // keyboard/AT users are not stranded on a now-hidden header button. (The
+  // hidden panels use display:none, which already removes them from the a11y
+  // tree, but explicit focus management is still needed.)
+
+  function focusById(id) {
+    const el = document.getElementById(id);
+    if (el && typeof el.focus === 'function') el.focus();
+  }
 
   function showLoading() {
     initDom();
@@ -24,6 +33,7 @@
     dom.settingsPanel.style.display = 'none';
     dom.historyPanel.style.display = 'none';
     dom.logPanel.style.display = 'none';
+    focusById('btnRefresh');
   }
 
   function showEmpty() {
@@ -60,6 +70,7 @@
     dom.mainContent.style.display = 'none';
     dom.settingsPanel.style.display = 'flex';
     dom.historyPanel.style.display = 'none';
+    focusById('btnBackFromSettings');
   }
 
   function showHistory() {
@@ -70,6 +81,7 @@
     dom.historyPanel.style.display = 'flex';
     dom.logPanel.style.display = 'none';
     window.PMM.historyPanel.load();
+    focusById('btnBackFromHistory');
   }
 
   function showLogPanel() {
@@ -80,9 +92,17 @@
     dom.historyPanel.style.display = 'none';
     dom.logPanel.style.display = 'flex';
     window.PMM.logPanel.load();
+    focusById('btnBackFromLog');
   }
 
   // ─── Ring rendering ───────────────────────────────────────────────────────
+
+  // Endpoint display metadata (ENDPOINTS lives in the background SW config, not
+  // the popup, so mirror the human-readable name + flag here for the footer).
+  const ENDPOINT_LABELS = {
+    china: { name: 'China', flag: '🇨🇳' },
+    international: { name: 'International', flag: '🌏' },
+  };
 
   const RING_RADIUS = 50;
   const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -103,29 +123,23 @@
 
   // ─── Usage rendering ──────────────────────────────────────────────────────
 
-  // M3: remainingPercent 字段已被 background.js 反转 (0-100) 为"剩余%"
+  // M3: remainingPercent is already corrected + clamped to 0..100 by core.js
+  // (correctRemainingPct). Trust it — do not re-derive from used/total here.
   function displayUsage(usage) {
     initDom();
 
     // 5-hour ring
-    const total = usage.intervalTotal || 1;
-    const remainingPct = usage.intervalRemainingPercent != null
-      ? usage.intervalRemainingPercent / 100
-      : (total > 0 ? usage.intervalRemains / total : 0);
-
+    const remainingPct = (usage.intervalRemainingPercent ?? 0) / 100;
     paintRing(dom.ringProgress, dom.ringPercent, remainingPct, false);
 
     // Weekly ring
-    const weeklyRemainingPct = usage.weeklyRemainingPercent != null
-      ? usage.weeklyRemainingPercent / 100
-      : (usage.weeklyTotal > 0 ? usage.weeklyRemains / usage.weeklyTotal : 0);
-
+    const weeklyRemainingPct = (usage.weeklyRemainingPercent ?? 0) / 100;
     paintRing(dom.weeklyRingProgress, dom.weeklyRingPercent, weeklyRemainingPct, true);
 
     // Reset time
     dom.intervalResetTime.textContent = usage.intervalResetTimeStr || '--';
 
-    // Token stats (including new period + total from VSCode extension reference)
+    // Token stats
     if (usage.tokenStats) {
       dom.statYesterday.textContent = formatTokensCN(usage.tokenStats.yesterday);
       dom.statSevenDay.textContent = formatTokensCN(usage.tokenStats.sevenDay);
@@ -148,12 +162,29 @@
       dom.subscriptionGroup.style.display = 'none';
     }
 
-    // Footer
-    dom.lastUpdated.textContent = '更新于 ' + formatTime(new Date());
-    const endpointName = state.currentSettings.endpoint === 'china' ? '🇨🇳' : '🌏';
-    dom.endpointLabel.textContent = state.currentSettings.endpoint + ' · ' + endpointName;
+    // Footer — use the actual fetch timestamp (carried on the usage object),
+    // not the popup-open wall-clock time (which previously showed "now" even
+    // for data fetched minutes ago).
+    const fetchedAt = usage.fetchedAt ? new Date(usage.fetchedAt) : new Date();
+    dom.lastUpdated.textContent = '更新于 ' + formatTime(fetchedAt);
+
+    // Endpoint label — show the endpoint's display name, not the raw key.
+    const endpointKey = state.currentSettings.endpoint || 'china';
+    const endpointMeta = ENDPOINT_LABELS[endpointKey];
+    dom.endpointLabel.textContent = endpointMeta
+      ? `${endpointMeta.name} · ${endpointMeta.flag}`
+      : endpointKey;
+
+    // Auto-refresh indicator — reflect the actual setting (previously always
+    // said "自动刷新中" even when auto-refresh was disabled).
     const interval = state.currentSettings.autoRefreshInterval || 60;
-    dom.refreshText.textContent = `自动刷新中 · 每 ${interval}s`;
+    if (state.currentSettings.autoRefreshEnabled === false) {
+      dom.refreshText.textContent = '已暂停自动刷新';
+      dom.refreshIndicator.classList.add('paused');
+    } else {
+      dom.refreshText.textContent = `自动刷新中 · 每 ${interval}s`;
+      dom.refreshIndicator.classList.remove('paused');
+    }
 
     showUsage();
   }

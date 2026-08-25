@@ -266,6 +266,7 @@ body::before {
   box-shadow: 0 0 8px var(--accent), 0 0 16px rgba(0,208,156,0.3);
   animation: pulse 2s ease-in-out infinite;
 }
+.refresh-indicator.paused .dot { animation: none; opacity: 0.4; box-shadow: none; }
 @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.85)} }
 
 /* Footer */
@@ -386,6 +387,9 @@ body::before {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 10px 6px; border-radius: 12px; cursor: pointer;
   border: 2px solid transparent; transition: all 0.25s ease;
+  /* reset native <button> defaults (theme-option is now a real button) */
+  background: transparent; font: inherit; color: inherit; text-align: center;
+  -webkit-appearance: none; appearance: none;
 }
 .theme-option:hover {
   background: rgba(255,255,255,0.04);
@@ -554,7 +558,10 @@ body::before {
 }
 .history-day-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 11px 14px; cursor: pointer;
+  width: 100%; padding: 11px 14px; cursor: pointer;
+  /* reset native <button> defaults (history-day-header is now a real button) */
+  background: transparent; border: none; font: inherit; color: inherit; text-align: left;
+  -webkit-appearance: none; appearance: none;
 }
 .history-day-header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .history-day-left { display: flex; flex-direction: column; }
@@ -640,3 +647,24 @@ body::before {
 .subscription-group { text-align: center; }
 .subscription-row { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 18px; font-weight: 700; color: var(--accent); }
 .subscription-label { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+
+/* ─── Themed confirmation modal (replaces native confirm()) ──────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  z-index: 100; animation: modal-fade 0.15s ease;
+}
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+.modal-card {
+  width: 260px; max-width: calc(100vw - 32px);
+  background: var(--bg-secondary); border: 1px solid var(--border-subtle);
+  border-radius: 16px; padding: 18px 18px 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border-subtle);
+  animation: modal-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes modal-pop { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+.modal-body { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-actions .btn-primary,
+.modal-actions .btn-secondary { padding: 8px 16px; font-size: 13px; }

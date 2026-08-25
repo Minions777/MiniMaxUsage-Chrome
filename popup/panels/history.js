@@ -19,9 +19,27 @@
     return Object.values(grouped).sort((a, b) => b.date - a.date);
   }
 
+  /**
+   * Estimate daily token consumption from snapshot deltas.
+   * `used` = intervalUsed (the 5h-window usage count), which RESETS to ~0 at
+   * each window boundary. Summing only the POSITIVE deltas between consecutive
+   * snapshots (sorted ascending) yields within-window consumption while
+   * ignoring the reset (negative) jumps. Previously this returned
+   * newest.used − oldest.used, which went negative (and rendered "--3500")
+   * whenever a day spanned a window reset.
+   */
   function dailyDelta(day) {
-    if (day.records.length < 2) return 0;
-    return day.records[0].used - day.records[day.records.length - 1].used;
+    const recs = [...day.records].sort((a, b) => a.timestamp - b.timestamp);
+    let total = 0;
+    let prev = null;
+    for (const r of recs) {
+      if (prev !== null) {
+        const d = Number(r.used) - Number(prev.used);
+        if (d > 0) total += d; // within-window increase; ignore reset (negative)
+      }
+      prev = r;
+    }
+    return total;
   }
 
   function renderEmpty() {
@@ -50,10 +68,10 @@
       dom.weeklyChart.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px;">数据不足</div>';
       return;
     }
-    const maxUsed = Math.max(...days.map(d => dailyDelta(d)));
+    const maxUsed = Math.max(1, ...days.map(d => dailyDelta(d)));
     dom.weeklyChart.innerHTML = days.map(day => {
       const used = dailyDelta(day);
-      const height = maxUsed > 0 ? Math.max(4, (used / maxUsed) * 50) : 4;
+      const height = Math.max(4, (used / maxUsed) * 50);
       return `
         <div class="bar-col">
           <div class="bar-bar" style="height:${height}px"></div>
@@ -69,6 +87,7 @@
       const used = dailyDelta(day);
       const weekday = weekdayNames[day.date.getDay()];
       const dateStr = formatDate(day.date);
+      const detailId = `history-day-detail-${dayIndex}`;
 
       const details = day.records.map(record => {
         const pct = record.total > 0 ? record.used / record.total : 0;
@@ -82,9 +101,11 @@
           </div>`;
       }).join('');
 
+      // Day header is a <button> so it is keyboard-focusable and announces
+      // expanded/collapsed state via aria-expanded/aria-controls.
       return `
         <div class="history-day" data-day-index="${dayIndex}">
-          <div class="history-day-header">
+          <button type="button" class="history-day-header" aria-expanded="false" aria-controls="${detailId}">
             <div class="history-day-left">
               <span class="history-day-weekday">${escapeHtml(weekday)}</span>
               <span class="history-day-date">${escapeHtml(dateStr)}</span>
@@ -92,10 +113,10 @@
             <div class="history-day-right">
               <span class="history-day-used">-${escapeHtml(formatNumber(used))}</span>
               <span class="history-day-records">${day.records.length}条</span>
-              <span class="history-day-expand">▶</span>
+              <span class="history-day-expand" aria-hidden="true">▶</span>
             </div>
-          </div>
-          <div class="history-day-detail">${details}</div>
+          </button>
+          <div class="history-day-detail" id="${detailId}">${details}</div>
         </div>`;
     }).join('');
   }
@@ -128,19 +149,23 @@
     const btnClear = document.getElementById('btnClearHistory');
     if (btnClear) {
       btnClear.addEventListener('click', async () => {
-        if (confirm('确定清空所有历史记录？')) {
+        const ok = await window.PMM.confirm('清空历史记录', '确定清空所有历史记录？');
+        if (ok) {
           await chrome.runtime.sendMessage({ type: 'CLEAR_HISTORY' });
           load();
         }
       });
     }
-    // Event delegation for day expand/collapse
+    // Event delegation for day expand/collapse (button is keyboard-operable)
     if (dom.historyList) {
       dom.historyList.addEventListener('click', (e) => {
         const header = e.target.closest('.history-day-header');
         if (!header) return;
         const detail = header.parentElement.querySelector('.history-day-detail');
-        if (detail) detail.classList.toggle('show');
+        if (detail) {
+          const open = detail.classList.toggle('show');
+          header.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
       });
     }
   }

@@ -35,6 +35,7 @@
       logPanel: get('logPanel'),
       logList: get('logList'),
       refreshOverlay: get('refreshOverlay'),
+      refreshIndicator: get('refreshIndicator'),
 
       // 5h ring
       ringProgress: get('ringProgress'),

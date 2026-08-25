@@ -3,8 +3,9 @@
 
 /**
  * Generic JSON GET with configurable retry.
- * Retry only on network errors / 5xx; 4xx (except 408/429) aborts immediately
- * since client errors (bad key, bad params) won't succeed on retry.
+ * Retry only on network errors / 5xx / 408 / 429 (decided by shouldRetryStatus);
+ * other 4xx (bad key, bad params) aborts immediately since they won't succeed
+ * on retry.
  *
  * @param {string} url - Full URL to fetch
  * @param {object} headers - Request headers
@@ -26,9 +27,8 @@ async function fetchJsonWithRetry(url, headers, { timeoutMs = 10000, maxAttempts
 
       if (response.ok) return await response.json();
 
-      // 4xx (except 408 Request Timeout / 429 Too Many Requests) — no retry
-      if (response.status >= 400 && response.status < 500
-          && response.status !== 408 && response.status !== 429) {
+      // Retry decision delegated to pure shouldRetryStatus (lib/utils.js)
+      if (!shouldRetryStatus(response.status)) {
         lastErr = new Error(`HTTP ${response.status}`);
         break; // Client error — retrying won't help
       }
@@ -47,31 +47,53 @@ async function fetchJsonWithRetry(url, headers, { timeoutMs = 10000, maxAttempts
 
 /**
  * Fetch subscription info (plan expiry date, credit reload time).
- * Returns null on failure — non-critical data.
+ * Cached for SUBSCRIPTION_CACHE_TTL_MS (plan expiry changes at most daily).
+ * Returns null on failure — non-critical data. Logs a warn on failure for
+ * diagnostic parity with fetchTotalTokens/fetchAllBillingRecords.
  */
 async function fetchSubscription(apiKey, endpoint) {
+  const { [SUBSCRIPTION_CACHE_KEY]: cache } =
+    await chrome.storage.local.get(SUBSCRIPTION_CACHE_KEY);
+  if (cache && (Date.now() - (cache.fetchedAt || 0)) <= SUBSCRIPTION_CACHE_TTL_MS) {
+    return cache.value; // may be null = legitimately no subscription
+  }
   try {
     const url = endpoint.baseURL + endpoint.subscriptionPath;
     const data = await fetchJsonWithRetry(url, {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     });
-    return data.current_subscribe || null;
+    const value = data.current_subscribe || null;
+    await chrome.storage.local.set({ [SUBSCRIPTION_CACHE_KEY]: { value, fetchedAt: Date.now() } });
+    return value;
   } catch (error) {
-    return null;
+    await addLog('warn', `订阅信息获取失败 (${error.message})，返回 null`);
+    return null; // do NOT cache failures — next cycle retries
   }
 }
 
 /**
- * Fetch all billing records (paginated, max 30 days).
+ * Fetch all billing records (paginated, max BILLING_WINDOW_DAYS days).
  * On partial failure, returns already-collected records (partial data > no data).
+ *
+ * Assumes the API returns records NEWEST-FIRST (the MiniMax charge endpoint's
+ * default). Keeps only in-window records and stops paging once a page contains
+ * any out-of-window record — an early-stop optimization that is correct under
+ * newest-first ordering. If the API ever returns oldest-first, this would
+ * return [] for users with >30 days of history (the early stop would fire on
+ * page 1 before reaching recent records); that ordering is not currently
+ * handled because it would require fetching all pages unbounded.
+ *
+ * Previously this `return`'d mid-loop on the first old record without pushing
+ * it, which could drop valid recent records that appeared after an old one on a
+ * mixed page (newest-first) — now fixed via the push-then-skip continue loop.
  */
 async function fetchAllBillingRecords(apiKey, endpoint) {
   const allRecords = [];
   let page = 1;
-  const limit = 100;
-  const maxPages = 30; // Safety limit to prevent infinite loops
-  const minStartTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const limit = BILLING_PAGE_SIZE;
+  const maxPages = BILLING_MAX_PAGES; // Safety limit to prevent infinite loops
+  const minStartTime = Date.now() - BILLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const headers = {
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -91,13 +113,16 @@ async function fetchAllBillingRecords(apiKey, endpoint) {
     const records = data.charge_records || [];
     if (records.length === 0) break;
 
+    // Keep only in-window records; detect any out-of-window record on this page.
+    let foundOld = false;
     for (const r of records) {
       const ts = r.created_at * 1000;
-      if (minStartTime && ts < minStartTime) return allRecords; // Past 30 days — stop
+      if (ts < minStartTime) { foundOld = true; continue; }
       allRecords.push(r);
     }
 
-    if (records.length < limit) break; // Last page
+    // Stop once we hit out-of-window records or a short (last) page.
+    if (foundOld || records.length < limit) break;
     page++;
   }
 
@@ -107,9 +132,16 @@ async function fetchAllBillingRecords(apiKey, endpoint) {
 /**
  * Fetch aggregate lifetime token consumption (server-side sum, no pagination).
  * Uses the billing endpoint with `aggregate=true` parameter.
- * Returns total consumed tokens across all time.
+ * Cached for TOTAL_TOKENS_CACHE_TTL_MS (changes slowly). Returns total consumed
+ * tokens across all time.
  */
 async function fetchTotalTokens(apiKey, endpoint) {
+  const { [TOTAL_TOKENS_CACHE_KEY]: cache } =
+    await chrome.storage.local.get(TOTAL_TOKENS_CACHE_KEY);
+  if (cache && typeof cache.value === 'number'
+      && (Date.now() - (cache.fetchedAt || 0)) <= TOTAL_TOKENS_CACHE_TTL_MS) {
+    return cache.value;
+  }
   const url = `${endpoint.baseURL}${endpoint.billingPath}?page=1&limit=1&aggregate=true`;
   try {
     const data = await fetchJsonWithRetry(url, {
@@ -119,10 +151,12 @@ async function fetchTotalTokens(apiKey, endpoint) {
     const statusCode = data.base_resp?.status_code ?? data.code;
     const statusMsg = data.base_resp?.status_msg ?? data.msg;
     if (statusCode !== undefined && statusCode !== 0) throw new Error(statusMsg || 'API Error');
-    return Number(data.consume_token_sum || 0);
+    const value = Number(data.consume_token_sum || 0);
+    await chrome.storage.local.set({ [TOTAL_TOKENS_CACHE_KEY]: { value, fetchedAt: Date.now() } });
+    return value;
   } catch (e) {
     // Non-critical — return 0 on failure (partial data > no data)
     await addLog('warn', `累计消耗获取失败 (${e.message})，返回 0`);
-    return 0;
+    return 0; // do NOT cache failures
   }
 }

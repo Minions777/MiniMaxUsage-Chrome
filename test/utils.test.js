@@ -133,3 +133,223 @@ describe('escapeHtml (no-DOM fallback)', () => {
     expect(u.escapeHtml(undefined)).toBe('');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tests for the extracted pure decision functions. These are the REAL
+// production logic (the same functions background/core.js, badge.js,
+// storage.js, billing.js call) — NOT inline re-derivations. Deleting or
+// breaking the production logic now actually fails these tests.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('correctRemainingPct (M3 reversal + clamp + fallback)', () => {
+  it('reverses the M3 "used %" field to true remaining %', () => {
+    // API 92 means 92% USED → 8% remaining
+    expect(u.correctRemainingPct(92, 1500, 0)).toBe(8);
+    expect(u.correctRemainingPct(20, 1500, 0)).toBe(80);
+  });
+  it('handles the 0/100 extremes', () => {
+    expect(u.correctRemainingPct(0, 1500, 0)).toBe(100);   // 0% used → 100% remaining
+    expect(u.correctRemainingPct(100, 1500, 0)).toBe(0);    // 100% used → 0% remaining
+  });
+  it('clamps out-of-range API values to [0,100]', () => {
+    expect(u.correctRemainingPct(-5, 1500, 0)).toBe(100);   // -5 used → 105 → clamped 100
+    expect(u.correctRemainingPct(105, 1500, 0)).toBe(0);   // 105 used → -5 → clamped 0
+    expect(u.correctRemainingPct(150, 1500, 0)).toBe(0);
+  });
+  it('falls back to count-based ratio when the API field is null/undefined', () => {
+    expect(u.correctRemainingPct(null, 1500, 300)).toBe(80);    // 1200/1500
+    expect(u.correctRemainingPct(undefined, 1000, 750)).toBe(25); // 250/1000
+  });
+  it('returns 0 when the API field is absent and total is 0', () => {
+    expect(u.correctRemainingPct(null, 0, 0)).toBe(0);
+    expect(u.correctRemainingPct(undefined, 0, 5)).toBe(0);
+  });
+  it('never returns null (consumers can trust the value)', () => {
+    for (const v of [null, undefined, 0, 50, 100, -5, 105]) {
+      const r = u.correctRemainingPct(v, 1000, 500);
+      expect(r).not.toBe(null);
+      expect(Number.isInteger(r)).toBe(true);
+      expect(r).toBeGreaterThanOrEqual(0);
+      expect(r).toBeLessThanOrEqual(100);
+    }
+  });
+});
+
+describe('selectMainModel (primary-model fallback chain)', () => {
+  it('prefers MiniMax-M* models', () => {
+    const models = [
+      { model_name: 'video', current_interval_total_count: 0 },
+      { model_name: 'general', current_interval_total_count: 500 },
+      { model_name: 'MiniMax-M1', current_interval_total_count: 1000 },
+    ];
+    expect(u.selectMainModel(models).model_name).toBe('MiniMax-M1');
+  });
+  it('falls back to "general" when no MiniMax-M*', () => {
+    const models = [
+      { model_name: 'video', current_interval_total_count: 0 },
+      { model_name: 'general', current_interval_total_count: 500 },
+    ];
+    expect(u.selectMainModel(models).model_name).toBe('general');
+  });
+  it('falls back to first model with quota > 0', () => {
+    const models = [
+      { model_name: 'video', current_interval_total_count: 0 },
+      { model_name: 'unknown', current_interval_total_count: 500 },
+    ];
+    expect(u.selectMainModel(models).model_name).toBe('unknown');
+  });
+  it('falls back to first model when all have 0 quota', () => {
+    expect(u.selectMainModel([{ model_name: 'video', current_interval_total_count: 0 }]).model_name).toBe('video');
+  });
+  it('returns undefined for empty/invalid input', () => {
+    expect(u.selectMainModel([])).toBeUndefined();
+    expect(u.selectMainModel(null)).toBeUndefined();
+    expect(u.selectMainModel(undefined)).toBeUndefined();
+  });
+});
+
+describe('dedupWindowKey (stable dedup key — no per-fetch drift)', () => {
+  it('prefers windowStartTime (absolute, bit-stable)', () => {
+    const usage = { windowStartTime: 1700000000000, intervalResetTime: 1700018000000 };
+    expect(u.dedupWindowKey(usage)).toBe(1700000000000);
+  });
+  it('falls back to intervalResetTime when windowStartTime is null', () => {
+    expect(u.dedupWindowKey({ windowStartTime: null, intervalResetTime: 1700018000000 })).toBe(1700018000000);
+  });
+  it('falls back to injectable now when both are null (deterministic in tests)', () => {
+    expect(u.dedupWindowKey({ windowStartTime: null, intervalResetTime: null }, 12345)).toBe('12345');
+  });
+  it('is STABLE across two fetches in the same 5h window (the bug that repeat-notified)', () => {
+    // intervalResetTime drifts per fetch (Date.now()+remains_ms), but windowStartTime is constant.
+    const fetch1 = u.dedupWindowKey({ windowStartTime: 1700000000000, intervalResetTime: 1700017999000 });
+    const fetch2 = u.dedupWindowKey({ windowStartTime: 1700000000000, intervalResetTime: 1700018001000 });
+    expect(fetch1).toBe(fetch2); // same window → same dedup key → no repeat notification
+  });
+});
+
+describe('isBillingCacheFresh / shouldIncludeBilling', () => {
+  const TTL = 30 * 60 * 1000;
+  it('isBillingCacheFresh: true when within TTL with records', () => {
+    const cache = { records: [{ id: 1 }], fetchedAt: Date.now() - 29 * 60000 };
+    expect(u.isBillingCacheFresh(cache, TTL)).toBe(true);
+  });
+  it('isBillingCacheFresh: false when past TTL', () => {
+    const cache = { records: [{ id: 1 }], fetchedAt: Date.now() - 31 * 60000 };
+    expect(u.isBillingCacheFresh(cache, TTL)).toBe(false);
+  });
+  it('isBillingCacheFresh: false when records empty (the empty-array truthy trap)', () => {
+    expect(u.isBillingCacheFresh({ records: [], fetchedAt: Date.now() }, TTL)).toBe(false);
+    expect(u.isBillingCacheFresh({ records: undefined }, TTL)).toBe(false);
+    expect(u.isBillingCacheFresh(null, TTL)).toBe(false);
+    expect(u.isBillingCacheFresh(undefined, TTL)).toBe(false);
+  });
+  it('shouldIncludeBilling is the inverse: true when expired/empty/missing', () => {
+    expect(u.shouldIncludeBilling(null, TTL)).toBe(true);
+    expect(u.shouldIncludeBilling({ records: [], fetchedAt: Date.now() }, TTL)).toBe(true);
+    expect(u.shouldIncludeBilling({ records: [{ id: 1 }], fetchedAt: Date.now() - 35 * 60000 }, TTL)).toBe(true);
+    expect(u.shouldIncludeBilling({ records: [{ id: 1 }], fetchedAt: Date.now() - 60000 }, TTL)).toBe(false);
+  });
+  it('uses the injectable now for deterministic boundary tests', () => {
+    const fetched = 1000000;
+    const cache = { records: [{ id: 1 }], fetchedAt: fetched };
+    expect(u.isBillingCacheFresh(cache, TTL, fetched + TTL)).toBe(true);     // exactly at TTL → fresh (<=)
+    expect(u.isBillingCacheFresh(cache, TTL, fetched + TTL + 1)).toBe(false); // just past → expired
+  });
+});
+
+describe('shouldRetryStatus (retry policy)', () => {
+  it('does NOT retry 4xx client errors (except 408/429)', () => {
+    expect(u.shouldRetryStatus(400)).toBe(false);
+    expect(u.shouldRetryStatus(401)).toBe(false);
+    expect(u.shouldRetryStatus(403)).toBe(false);
+    expect(u.shouldRetryStatus(404)).toBe(false);
+  });
+  it('retries 408 Request Timeout', () => expect(u.shouldRetryStatus(408)).toBe(true));
+  it('retries 429 Too Many Requests', () => expect(u.shouldRetryStatus(429)).toBe(true));
+  it('retries 5xx server errors', () => {
+    expect(u.shouldRetryStatus(500)).toBe(true);
+    expect(u.shouldRetryStatus(502)).toBe(true);
+    expect(u.shouldRetryStatus(503)).toBe(true);
+  });
+});
+
+describe('badgeColorHex (SW badge thresholds, shared with colorForPercentage)', () => {
+  it('returns green for remaining >= 60', () => {
+    expect(u.badgeColorHex(80)).toBe('#00d09c');
+    expect(u.badgeColorHex(60)).toBe('#00d09c');
+  });
+  it('returns yellow for remaining 30..59', () => {
+    expect(u.badgeColorHex(45)).toBe('#fdcb6e');
+    expect(u.badgeColorHex(30)).toBe('#fdcb6e');
+  });
+  it('returns red for remaining < 30', () => {
+    expect(u.badgeColorHex(20)).toBe('#ff7675');
+    expect(u.badgeColorHex(0)).toBe('#ff7675');
+  });
+});
+
+describe('pruneLogs (newest-first retention + cap)', () => {
+  const now = 1_700_000_000_000;
+  it('keeps only entries within retention window', () => {
+    const logs = [
+      { timestamp: now - 1000, msg: 'recent' },
+      { timestamp: now - 8 * 86400000, msg: 'old' }, // 8 days ago → drop
+    ];
+    const pruned = u.pruneLogs(logs, now, 7, 200);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].msg).toBe('recent');
+  });
+  it('keeps the NEWEST `max` entries (fixes the slice(-200) bug that dropped newest)', () => {
+    const logs = [];
+    for (let i = 0; i < 250; i++) logs.push({ timestamp: now - i, msg: `n${i}` }); // newest-first already
+    const pruned = u.pruneLogs(logs, now, 7, 200);
+    expect(pruned).toHaveLength(200);
+    expect(pruned[0].msg).toBe('n0');   // newest kept
+    expect(pruned[199].msg).toBe('n199');
+  });
+  it('handles empty / null input', () => {
+    expect(u.pruneLogs([], now, 7, 200)).toEqual([]);
+    expect(u.pruneLogs(null, now, 7, 200)).toEqual([]);
+  });
+});
+
+describe('pruneHistoryRecords (retention + per-day cap, newest-first out)', () => {
+  const now = 1_700_000_000_000;
+  it('drops entries older than retention window', () => {
+    const history = [
+      { timestamp: now - 1000, used: 1, total: 10 },
+      { timestamp: now - 31 * 86400000, used: 1, total: 10 }, // 31 days → drop
+    ];
+    const pruned = u.pruneHistoryRecords(history, now, 30, 24);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].timestamp).toBe(now - 1000);
+  });
+  it('caps at maxPerDay per day, keeping the newest within each day', () => {
+    const dayMs = new Date(now - 1000).toDateString();
+    const history = [];
+    for (let i = 0; i < 30; i++) history.push({ timestamp: now - 1000 - i * 1000, used: i, total: 100 });
+    const pruned = u.pruneHistoryRecords(history, now, 30, 5);
+    expect(pruned).toHaveLength(5); // capped to 5/day
+    // newest-first: the 5 smallest offsets (most recent) kept
+    expect(pruned[0].used).toBe(0); // most recent
+  });
+  it('output is newest-first overall', () => {
+    const history = [
+      { timestamp: now - 5000, used: 1, total: 10 },
+      { timestamp: now - 1000, used: 2, total: 10 },
+    ];
+    const pruned = u.pruneHistoryRecords(history, now, 30, 24);
+    expect(pruned[0].timestamp).toBe(now - 1000); // newest first
+    expect(pruned[1].timestamp).toBe(now - 5000);
+  });
+});
+
+describe('shared policy constants are exported', () => {
+  it('COLOR_THRESHOLDS has GREEN_PCT 60 and ORANGE_PCT 30', () => {
+    expect(u.COLOR_THRESHOLDS.GREEN_PCT).toBe(60);
+    expect(u.COLOR_THRESHOLDS.ORANGE_PCT).toBe(30);
+  });
+  it('BILLING_WINDOW_DAYS is 30', () => {
+    expect(u.BILLING_WINDOW_DAYS).toBe(30);
+  });
+});

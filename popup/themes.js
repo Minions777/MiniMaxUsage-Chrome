@@ -24,7 +24,7 @@
         '--accent-glow-strong': 'rgba(0, 208, 156, 0.6)',
         '--text-primary': '#ffffff',
         '--text-secondary': 'rgba(255, 255, 255, 0.65)',
-        '--text-muted': 'rgba(255, 255, 255, 0.35)',
+        '--text-muted': 'rgba(255, 255, 255, 0.6)',
         '--border-subtle': 'rgba(255, 255, 255, 0.06)',
         '--glass-bg': 'rgba(255, 255, 255, 0.025)',
         '--shadow-glow': '0 8px 32px rgba(0, 208, 156, 0.2)',
@@ -49,7 +49,7 @@
         '--accent-glow-strong': 'rgba(0, 180, 255, 0.6)',
         '--text-primary': '#ffffff',
         '--text-secondary': 'rgba(255, 255, 255, 0.6)',
-        '--text-muted': 'rgba(255, 255, 255, 0.3)',
+        '--text-muted': 'rgba(255, 255, 255, 0.6)',
         '--border-subtle': 'rgba(255, 255, 255, 0.05)',
         '--glass-bg': 'rgba(0, 180, 255, 0.03)',
         '--shadow-glow': '0 8px 32px rgba(0, 180, 255, 0.2)',
@@ -74,7 +74,7 @@
         '--accent-glow-strong': 'rgba(255, 140, 66, 0.6)',
         '--text-primary': '#ffffff',
         '--text-secondary': 'rgba(255, 255, 255, 0.6)',
-        '--text-muted': 'rgba(255, 255, 255, 0.3)',
+        '--text-muted': 'rgba(255, 255, 255, 0.6)',
         '--border-subtle': 'rgba(255, 255, 255, 0.05)',
         '--glass-bg': 'rgba(255, 140, 66, 0.03)',
         '--shadow-glow': '0 8px 32px rgba(255, 140, 66, 0.2)',
@@ -99,7 +99,7 @@
         '--accent-glow-strong': 'rgba(168, 85, 247, 0.6)',
         '--text-primary': '#ffffff',
         '--text-secondary': 'rgba(255, 255, 255, 0.6)',
-        '--text-muted': 'rgba(255, 255, 255, 0.3)',
+        '--text-muted': 'rgba(255, 255, 255, 0.6)',
         '--border-subtle': 'rgba(255, 255, 255, 0.05)',
         '--glass-bg': 'rgba(168, 85, 247, 0.03)',
         '--shadow-glow': '0 8px 32px rgba(168, 85, 247, 0.2)',
@@ -124,7 +124,7 @@
         '--accent-glow-strong': 'rgba(224, 224, 224, 0.5)',
         '--text-primary': '#ffffff',
         '--text-secondary': 'rgba(255, 255, 255, 0.55)',
-        '--text-muted': 'rgba(255, 255, 255, 0.25)',
+        '--text-muted': 'rgba(255, 255, 255, 0.6)',
         '--border-subtle': 'rgba(255, 255, 255, 0.07)',
         '--glass-bg': 'rgba(255, 255, 255, 0.02)',
         '--shadow-glow': '0 8px 32px rgba(224, 224, 224, 0.08)',
@@ -181,7 +181,9 @@
 
   function updateThemeUI(themeId) {
     document.querySelectorAll('.theme-option').forEach(opt => {
-      opt.classList.toggle('selected', opt.dataset.theme === themeId);
+      const selected = opt.dataset.theme === themeId;
+      opt.classList.toggle('selected', selected);
+      opt.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
   }
 

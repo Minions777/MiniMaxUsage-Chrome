@@ -58,7 +58,8 @@
     const btnClear = document.getElementById('btnClearLog');
     if (btnClear) {
       btnClear.addEventListener('click', async () => {
-        if (confirm('确定清空所有日志？')) {
+        const ok = await window.PMM.confirm('清空日志', '确定清空所有日志？');
+        if (ok) {
           await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
           load();
         }
