@@ -1,49 +1,38 @@
 // MiniMax Token Monitor - Badge & Desktop Notification
 // Extension icon badge text/color update and low-usage desktop notifications.
 //
-// ⚠️ M3 API CRITICAL SEMANTIC NOTE (applies to all functions in this file):
-//
-// The MiniMax M3 API field `current_interval_remaining_percent` is
-// SEMANTICALLY REVERSED: despite its name suggesting "remaining percent",
-// it actually represents "USED percent". For example:
-//   remaining_percent = 92  →  92% USED  →  only 8% truly remaining
-//   remaining_percent = 20  →  20% USED  →  80% truly remaining
-//
-// This reversal is corrected in background/core.js:
-//   displayRemainingPercent = 100 - api_remaining_percent
-//
-// By the time these functions receive `usage.intervalRemainingPercent`, it
-// already represents the TRUE "remaining%" (higher = more quota available).
-// Badge and notification logic operate on the corrected value.
+// ⚠️ M3 API SEMANTIC NOTE (applies to all functions in this file):
+// `current_interval_remaining_percent` is TRUTHFULLY "remaining %" (of the
+// boosted total). background/core.js resolves it via resolveUsagePercents
+// (lib/utils.js) into used% / remaining% relative to the BASE. By the time
+// these functions receive usage.intervalRemainingPercent it is a true 0..100
+// "remaining%" (higher = more quota available). Badge color + notification
+// logic operate on that remaining%.
 
 /**
  * Update extension icon badge with remaining percentage and color.
- * Green (≥60%), Yellow (≥30%), Red (<30%) — based on CORRECTED remaining%.
+ * Green (≥60%), Yellow (≥30%), Red (<30%) — threshold from COLOR_THRESHOLDS,
+ * hex from badgeColorHex (both in lib/utils.js, single source of truth).
  */
 function updateBadge(usage) {
   if (!usage || usage.error) {
     chrome.action.setBadgeText({ text: '!' });
     chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
-  } else {
-    const remainingPct = usage.intervalRemainingPercent ?? (
-      usage.intervalTotal > 0 ? Math.round((usage.intervalRemains / usage.intervalTotal) * 100) : 0
-    );
-    chrome.action.setBadgeText({ text: remainingPct + '%' });
-
-    if (remainingPct >= 60) {
-      chrome.action.setBadgeBackgroundColor({ color: '#00d09c' });
-    } else if (remainingPct >= 30) {
-      chrome.action.setBadgeBackgroundColor({ color: '#fdcb6e' });
-    } else {
-      chrome.action.setBadgeBackgroundColor({ color: '#ff7675' });
-    }
+    return;
   }
+  // core.js guarantees a 0..100 integer here; ?? 0 is belt-and-suspenders for
+  // any stale cached usage object persisted before the correction existed.
+  const remainingPct = usage.intervalRemainingPercent ?? 0;
+  chrome.action.setBadgeText({ text: remainingPct + '%' });
+  chrome.action.setBadgeBackgroundColor({ color: badgeColorHex(remainingPct) });
 }
 
 /**
  * Send desktop notification when remaining quota drops below threshold.
- * Same time window only notifies once (keyed by intervalResetTime) to avoid
- * notification spam during auto-refresh.
+ * Same time window only notifies once. The dedup key uses dedupWindowKey(usage)
+ * → prefers the stable `windowStartTime` (absolute API timestamp), NOT
+ * `intervalResetTime` (which = Date.now()+remains_ms and drifts per fetch, so
+ * keying on it caused repeat notifications for the same 5h window).
  *
  * Note: chrome.notifications requires the "notifications" permission declared
  * in manifest.json. If permission is denied at runtime, this silently fails.
@@ -62,22 +51,20 @@ async function maybeNotifyLowUsage(usage) {
     // Default: notifications enabled
     if (notifEnabled === false) return;
 
-    const remainingPct = usage.intervalRemainingPercent ?? (
-      usage.intervalTotal > 0 ? Math.round((usage.intervalRemains / usage.intervalTotal) * 100) : 0
-    );
+    const remainingPct = usage.intervalRemainingPercent ?? 0;
     const limit = typeof threshold === 'number' ? threshold : DEFAULT_NOTIFY_THRESHOLD;
     if (remainingPct > limit) return; // Still above threshold — no notification
 
-    // Dedup: same window (intervalResetTime) only notifies once
-    const windowKey = usage.intervalResetTime || String(usage.intervalRemains);
+    // Dedup: same window only notifies once (stable key, see header)
+    const windowKey = dedupWindowKey(usage);
     const notified = Array.isArray(notifiedRaw) ? notifiedRaw : [];
     if (notified.includes(windowKey)) return;
 
     await chrome.notifications.create(`low-usage-${windowKey}`, {
       type: 'basic',
       iconUrl: 'icons/icon128.png',
-      title: '用量提醒', // 用量提醒
-      message: `5 小时配额剩余 ${remainingPct}%，请注意用量`, // 5 小时配额剩余 X%，请注意用量
+      title: '用量提醒',
+      message: `5 小时配额剩余 ${remainingPct}%，请注意用量`,
       priority: 2,
     });
 
@@ -86,6 +73,6 @@ async function maybeNotifyLowUsage(usage) {
     await chrome.storage.sync.set({ [STORAGE_KEYS.NOTIFIED_WINDOW_KEYS]: updatedNotified });
   } catch (e) {
     // notifications permission denied etc. — silent failure, don't break main flow
-    await addLog('warn', `通知发送失败: ${e.message}`); // 通知发送失败
+    await addLog('warn', `通知发送失败: ${e.message}`);
   }
 }

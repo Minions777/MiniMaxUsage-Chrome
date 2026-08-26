@@ -27,11 +27,17 @@
       return undefined;
     });
 
-    // Load settings and cached usage
-    state.currentSettings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    // Load settings and cached usage in parallel (two independent SW round-trips;
+    // previously awaited sequentially, adding one round-trip of latency per open).
+    // applySettingsToUI must still run before displayUsage, which reads
+    // state.currentSettings, so we wait for both then apply settings first.
+    const [settings, cached] = await Promise.all([
+      chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }),
+      chrome.runtime.sendMessage({ type: 'GET_USAGE' }),
+    ]);
+    state.currentSettings = settings;
     window.PMM.settingsPanel.applySettingsToUI(state.currentSettings);
 
-    const cached = await chrome.runtime.sendMessage({ type: 'GET_USAGE' });
     if (cached && !cached.error) {
       display.displayUsage(cached);
     } else if (cached?.error === 'NO_API_KEY') {

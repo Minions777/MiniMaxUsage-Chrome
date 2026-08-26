@@ -3,41 +3,53 @@
 // history recording, badge update, and notification dispatch.
 //
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ⚠️⚠️⚠️  M3 API CRITICAL SEMANTIC NOTE  ⚠️⚠️⚠️
+// ⚠️  M3 API SEMANTIC NOTE  ⚠️
 //
-// The MiniMax M3 API field `current_interval_remaining_percent` is
-// SEMANTICALLY REVERSED from what its name implies:
+// The MiniMax M3 API fields `current_interval_remaining_percent` and
+// `current_weekly_remaining_percent` are TRUTHFULLY named: they are the
+// REMAINING percent, measured against the (possibly boosted) total. The weekly
+// total can be boosted above the base quota by `weekly_boost_permille`
+// (1500 = 1.5×). resolveUsagePercents() (lib/utils.js) converts these to
+// used% / remaining% relative to the BASE — matching the official site's
+// "已用%" — with clamp + count-based fallback. It is the single source of
+// truth; downstream consumers (badge.js, popup/display.js) receive guaranteed
+// 0..100 integers and must NOT re-derive them.
 //
-//   Field name:  "remaining_percent"
-//   Actual meaning: "USED percent" (!)
-//
-//   Example: remaining_percent = 92  →  92% USED  →  only 8% remaining
-//   Example: remaining_percent = 20  →  20% USED  →  80% remaining
-//
-// This code REVERSES the value so downstream consumers see the true meaning:
-//   displayRemainingPercent = 100 - api_remaining_percent
-//
-// The same reversal applies to `current_weekly_remaining_percent`.
-//
-// ALL downstream code (badge.js, popup/display.js, etc.) receives the
-// CORRECTED value where HIGHER numbers = MORE quota available.
-//
-// If you see "remaining_percent" in any M3 API response, ALWAYS interpret
-// it as "used_percent" unless this reversal has already been applied.
+// (The earlier code wrongly did `100 - value`, treating the field as "used%",
+//  and ignored the boost — the cause of the "extension 30% vs official 43%"
+//  discrepancy. See resolveUsagePercents() in lib/utils.js.)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// In-flight guard: while a fetch is running, concurrent NON-force callers share
+// its promise instead of firing a duplicate request. This prevents the
+// SW-restart init IIFE and the auto-refresh alarm handler from double-fetching
+// when both fire on the same SW wake. Cleared in finally.
+let fetchInFlight = null;
 
 /**
  * Fetch latest usage data from MiniMax API.
  *
- * Uses fetchJsonWithRetry for all API calls (robust retry + backoff on
-// 5xx / network errors, immediate abort on 4xx client errors).
+ * Uses fetchJsonWithRetry for all API calls (robust retry + backoff on 5xx /
+ * network errors, immediate abort on 4xx client errors via shouldRetryStatus).
  *
  * @param {object} [options]
- * @param {boolean} [options.force=false] - Skip throttle, force a fresh API call
+ * @param {boolean} [options.force=false] - Skip throttle, force a fresh API call.
+ *   force callers always run their own fetch (never share an in-flight one) so a
+ *   manual refresh bypasses the throttle even if an alarm fetch is mid-flight.
  * @param {boolean} [options.includeBilling=false] - Fetch & refresh Token billing data
  * @returns {Promise<object>} Usage data object or { error: string }
  */
-async function fetchUsage({ force = false, includeBilling = false } = {}) {
+function fetchUsage({ force = false, includeBilling = false } = {}) {
+  // Non-force callers share any in-flight fetch (dedup concurrent alarms/init).
+  if (!force && fetchInFlight) return fetchInFlight;
+  const promise = doFetchUsage({ force, includeBilling });
+  fetchInFlight = promise;
+  return promise.finally(() => {
+    if (fetchInFlight === promise) fetchInFlight = null;
+  });
+}
+
+async function doFetchUsage({ force = false, includeBilling = false } = {}) {
   const settings = await getSettings();
   if (!settings.apiKey) return { error: 'NO_API_KEY' };
 
@@ -53,8 +65,6 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
 
   try {
     // ── 1. Fetch quota remains (with retry) ──
-    // Previously used bare fetch() — now uses fetchJsonWithRetry for
-    // robust handling: exponential backoff on 5xx, abort on 4xx.
     const data = await fetchJsonWithRetry(url, {
       'Authorization': `Bearer ${settings.apiKey}`,
       'Content-Type': 'application/json',
@@ -67,13 +77,9 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
     const models = data.model_remains || [];
     if (models.length === 0) throw new Error('无模型数据');
 
-    // ── 2. Select primary model ──
-    // Fallback chain: MiniMax-M* → general → first with quota → first
-    // (VSCode extension adds 'general' model name as intermediate fallback)
-    const mainModel = models.find(m => m.model_name?.startsWith('MiniMax-M'))
-      || models.find(m => m.model_name === 'general')
-      || models.find(m => m.current_interval_total_count > 0)
-      || models[0];
+    // ── 2. Select primary model (pure selectMainModel from lib/utils.js) ──
+    const mainModel = selectMainModel(models);
+    if (!mainModel) throw new Error('无模型数据');
 
     // ─── 3. 5-hour window quota ─────────────────────────────────────────────
 
@@ -81,12 +87,12 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
     const intervalUsedCount = mainModel.current_interval_usage_count || 0;
     const intervalRemains = intervalTotal - intervalUsedCount;
 
-    // ⚠️ M3 REVERSAL: remaining_percent field = USED%, not remaining%.
-    // True remaining% = 100 - api_remaining_percent.
-    const intervalRemainingPct = mainModel.current_interval_remaining_percent;
-    const intervalRemainingPercent = (intervalRemainingPct !== undefined && intervalRemainingPct !== null)
-      ? Math.round(100 - intervalRemainingPct) // REVERSAL applied here
-      : (intervalTotal > 0 ? Math.round((intervalRemains / intervalTotal) * 100) : null);
+    // M3: resolve used% & remaining% (relative to base). The 5-hour interval
+    // has no boost, so boostPermille=1000. Single source: resolveUsagePercents.
+    const intervalPercents = resolveUsagePercents(
+      mainModel.current_interval_remaining_percent, 1000, intervalTotal, intervalUsedCount);
+    const intervalUsedPercent = intervalPercents.usedPct;
+    const intervalRemainingPercent = intervalPercents.remainingPct;
 
     // M3: remains_time is relative (ms) → compute absolute reset timestamp
     const intervalResetMs = mainModel.remains_time || 0;
@@ -102,59 +108,62 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
     const weeklyUsedCount = mainModel.current_weekly_usage_count || 0;
     const weeklyRemains = weeklyTotal - weeklyUsedCount;
 
-    // ⚠️ M3 REVERSAL: weekly_remaining_percent = USED%, same as interval.
-    const weeklyRemainingPct = mainModel.current_weekly_remaining_percent;
-    const weeklyRemainingPercent = (weeklyRemainingPct !== undefined && weeklyRemainingPct !== null)
-      ? Math.round(100 - weeklyRemainingPct) // REVERSAL applied here
-      : (weeklyTotal > 0 ? Math.round((weeklyRemains / weeklyTotal) * 100) : null);
+    // M3: the weekly total can be boosted above the base quota by
+    // weekly_boost_permille (1500 = 1.5×). resolveUsagePercents normalizes
+    // used% to the BASE so it matches the official site's "已用%".
+    const weeklyBoostPermille = mainModel.weekly_boost_permille || 1000;
+    const weeklyPercents = resolveUsagePercents(
+      mainModel.current_weekly_remaining_percent, weeklyBoostPermille, weeklyTotal, weeklyUsedCount);
+    const weeklyUsedPercent = weeklyPercents.usedPct;
+    const weeklyRemainingPercent = weeklyPercents.remainingPct;
 
     const weeklyResetMs = mainModel.weekly_remains_time || 0;
     const weeklyResetTime = weeklyResetMs > 0 ? Date.now() + weeklyResetMs : null;
 
     // ─── 5. Subscription + billing + totalTokens ─────────────────────────────
+    // Each fetcher catches/logs its own failures and returns a safe default
+    // (null / [] / 0), so Promise.allSettled never rejects and a dead outer
+    // try/catch is not needed. Rejected results (defensive) leave defaults.
 
     let subscription = null;
     let billingRecords = [];
     let totalTokens = 0;
 
-    try {
-      const results = await Promise.allSettled([
-        fetchSubscription(settings.apiKey, endpoint),
-        includeBilling
-          ? fetchAndCacheBilling(settings.apiKey, endpoint)
-          : loadCachedBilling(),
-        // [New] Fetch aggregate lifetime token consumption
-        fetchTotalTokens(settings.apiKey, endpoint),
-      ]);
-      if (results[0].status === 'fulfilled' && results[0].value) subscription = results[0].value;
-      if (results[1].status === 'fulfilled') billingRecords = results[1].value;
-      if (results[2].status === 'fulfilled') totalTokens = results[2].value || 0;
-    } catch {
-      // Silent failure — subscription/billing are non-critical
-    }
+    const results = await Promise.allSettled([
+      fetchSubscription(settings.apiKey, endpoint),
+      includeBilling
+        ? fetchAndCacheBilling(settings.apiKey, endpoint)
+        : loadCachedBilling(),
+      fetchTotalTokens(settings.apiKey, endpoint),
+    ]);
+    if (results[0].status === 'fulfilled' && results[0].value) subscription = results[0].value;
+    if (results[1].status === 'fulfilled') billingRecords = results[1].value;
+    if (results[2].status === 'fulfilled') totalTokens = results[2].value || 0;
 
-    // Pure functions from lib/utils.js (loaded via importScripts)
-    // [New] calculateTokenStats now returns periodTokens (30-day) + totalTokens
+    // Pure function from lib/utils.js (loaded via importScripts)
     const tokenStats = calculateTokenStats(billingRecords, undefined, totalTokens);
 
+    const fetchedAt = Date.now();
     const usage = {
       // 5-hour window
       intervalUsed: intervalUsedCount,
       intervalRemains,
       intervalTotal,
-      intervalRemainingPercent,   // ⚠️ CORRECTED (reversed from API)
+      intervalRemainingPercent,   // remaining % (of base) — for badge color
+      intervalUsedPercent,        // used % (of base) — ring displays this
       intervalResetTime,
       intervalResetMs,
 
       // Time window (M3)
-      windowStartTime: startTime,  // [Task-6] Used as stable dedup key
+      windowStartTime: startTime,  // [Task-6] stable dedup key source
       windowEndTime: endTime,
 
       // Weekly quota
       weeklyUsed: weeklyUsedCount,
       weeklyRemains,
       weeklyTotal,
-      weeklyRemainingPercent,      // ⚠️ CORRECTED (reversed from API)
+      weeklyRemainingPercent,      // remaining % (of base)
+      weeklyUsedPercent,           // used % (of base) — ring displays this
       weeklyResetTime,
       weeklyResetMs,
 
@@ -163,12 +172,16 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
         yesterday: tokenStats.yesterdayTokens,
         sevenDay: tokenStats.sevenDayTokens,
         month: tokenStats.monthTokens,
-        period: tokenStats.periodTokens,   // [New] 近30天
-        total: tokenStats.totalTokens,      // [New] 累计
+        period: tokenStats.periodTokens,   // 近30天
+        total: tokenStats.totalTokens,      // 累计
       },
 
       // Model name (for display)
       modelName: mainModel.model_name || 'unknown',
+
+      // When this snapshot was fetched (for the popup footer — previously the
+      // popup showed its own open-time, which was misleading)
+      fetchedAt,
 
       // Subscription expiry
       subscription: subscription ? {
@@ -185,12 +198,12 @@ async function fetchUsage({ force = false, includeBilling = false } = {}) {
     // Persist usage data and fetch timestamp
     await chrome.storage.local.set({
       [STORAGE_KEYS.LAST_USAGE]: usage,
-      [STORAGE_KEYS.LAST_FETCH_AT]: Date.now(),
+      [STORAGE_KEYS.LAST_FETCH_AT]: fetchedAt,
     });
 
     // Record in history (dedup handled by addHistoryRecord)
     await addHistoryRecord(usage);
-    await addLog('success', `获取用量成功 — 剩余 ${intervalRemains} / 总计 ${intervalTotal} (${intervalRemainingPercent ?? '--'}%)`);
+    await addLog('success', `获取用量成功 — 5h已用 ${intervalUsedPercent}% (剩余 ${intervalRemains}/${intervalTotal}); 本周已用 ${weeklyUsedPercent}%`);
     updateBadge(usage);
     await maybeNotifyLowUsage(usage);
 

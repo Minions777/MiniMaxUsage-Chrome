@@ -46,65 +46,64 @@ async function getHistory() {
   return result[STORAGE_KEYS.HISTORY] || [];
 }
 
+// Prune + cap history (delegates to pure pruneHistoryRecords from lib/utils.js).
 async function saveHistory(history) {
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const fresh = history.filter(r => r.timestamp > cutoff);
-
-  const grouped = {};
-  fresh.forEach(r => {
-    const dayKey = new Date(r.timestamp).toDateString();
-    if (!grouped[dayKey]) grouped[dayKey] = [];
-    grouped[dayKey].push(r);
-  });
-
-  const limited = [];
-  Object.values(grouped).forEach(dayRecords => {
-    dayRecords.sort((a, b) => b.timestamp - a.timestamp);
-    limited.push(...dayRecords.slice(0, 24));
-  });
-  limited.sort((a, b) => b.timestamp - a.timestamp);
-
+  const limited = pruneHistoryRecords(history, Date.now(), HISTORY_RETENTION_DAYS, HISTORY_MAX_PER_DAY);
   await chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: limited });
+  return limited;
 }
 
 /**
  * Add a history record for the current usage snapshot.
  *
  * [Task-6] IMPROVED DEDUP STRATEGY:
- * Uses `windowStartTime` (absolute start of the 5h window) as the primary
- * dedup key — it's perfectly stable within a window since it's an absolute
- * timestamp from the API, not a computed value like `intervalResetTime`
- * (which = Date.now() + remains_time_ms and shifts slightly per fetch).
+ * Uses dedupWindowKey(usage) → prefers `windowStartTime` (absolute start of
+ * the 5h window, bit-stable across fetches) over `intervalResetTime` (which
+ * = Date.now() + remains_time and drifts per fetch). The dedup key selection
+ * lives in lib/utils.js so tests exercise the real function.
  *
- * Falls back to `intervalResetTime` if `windowStartTime` is unavailable.
+ * Batched: one read (LAST_WINDOW_KEY + HISTORY) and one write (HISTORY +
+ * LAST_WINDOW_KEY) instead of 4 round-trips. A dedicated key (LAST_WINDOW_KEY)
+ * tracks the last recorded window, decoupled from LAST_USAGE.
  *
- * A dedicated storage key (LAST_WINDOW_KEY) tracks the last recorded window,
- * decoupled from LAST_USAGE — so even if LAST_USAGE is updated without a new
- * history record, dedup still works correctly.
+ * Serialized via historyWriteQueue with a re-check inside the critical section:
+ * two concurrent fetchUsage calls (e.g. a force refresh overlapping an alarm
+ * fetch) landing on the same new window can't both pass the dedup check and
+ * double-insert / lost-write, because the second re-reads LAST_WINDOW_KEY after
+ * the first has written it.
  */
-async function addHistoryRecord(usage) {
-  // Prefer windowStartTime (stable absolute start) over intervalResetTime (computed)
-  const windowKey = usage.windowStartTime
-    || usage.intervalResetTime
-    || String(Date.now());
+let historyWriteQueue = Promise.resolve();
+function addHistoryRecord(usage) {
+  historyWriteQueue = historyWriteQueue
+    .then(async () => {
+      const windowKey = dedupWindowKey(usage);
 
-  const { [STORAGE_KEYS.LAST_WINDOW_KEY]: lastKey } =
-    await chrome.storage.local.get(STORAGE_KEYS.LAST_WINDOW_KEY);
+      // Re-read inside the critical section: a prior queued write may have
+      // just landed this same windowKey, in which case skip.
+      const { [STORAGE_KEYS.LAST_WINDOW_KEY]: lastKey,
+              [STORAGE_KEYS.HISTORY]: historyRaw } =
+        await chrome.storage.local.get([STORAGE_KEYS.LAST_WINDOW_KEY, STORAGE_KEYS.HISTORY]);
 
-  if (lastKey === windowKey) return; // Same window already recorded — skip
+      if (lastKey === windowKey) return; // Same window already recorded — skip
 
-  const history = await getHistory();
-  history.unshift({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    used: usage.intervalUsed,
-    remains: usage.intervalRemains,
-    total: usage.intervalTotal,
-  });
-  await saveHistory(history);
+      const history = Array.isArray(historyRaw) ? historyRaw : [];
+      history.unshift({
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        used: usage.intervalUsed,
+        remains: usage.intervalRemains,
+        total: usage.intervalTotal,
+      });
 
-  // Persist the dedup key independently from LAST_USAGE
-  await chrome.storage.local.set({ [STORAGE_KEYS.LAST_WINDOW_KEY]: windowKey });
+      // Batched write: history + dedup key in one round-trip.
+      const limited = pruneHistoryRecords(history, Date.now(), HISTORY_RETENTION_DAYS, HISTORY_MAX_PER_DAY);
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.HISTORY]: limited,
+        [STORAGE_KEYS.LAST_WINDOW_KEY]: windowKey,
+      });
+    })
+    .catch(() => {}); // never let one failed write break the queue for subsequent records
+  return historyWriteQueue;
 }
 
 // ─── Logs ────────────────────────────────────────────────────────────────────
@@ -115,20 +114,33 @@ async function getLogs() {
 }
 
 async function saveLogs(logs) {
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const filtered = logs.filter(r => r.timestamp > cutoff).slice(-200);
-  await chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: filtered });
+  const pruned = pruneLogs(logs, Date.now(), LOG_RETENTION_DAYS, LOG_MAX);
+  await chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: pruned });
+  return pruned;
 }
 
-async function addLog(type, message) {
-  const logs = await getLogs();
-  logs.unshift({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    type,
-    message,
-  });
-  await saveLogs(logs);
+/**
+ * Append a log entry. Serialized via an in-SW promise queue so concurrent
+ * addLog calls (e.g. billing-page failure + totalTokens failure racing inside
+ * one fetchUsage via Promise.allSettled) do not lost-write each other.
+ * pruneLogs keeps the NEWEST LOG_MAX entries (input is newest-first via unshift).
+ */
+let logWriteQueue = Promise.resolve();
+function addLog(type, message) {
+  logWriteQueue = logWriteQueue
+    .then(async () => {
+      const { [STORAGE_KEYS.LOGS]: logsRaw } = await chrome.storage.local.get(STORAGE_KEYS.LOGS);
+      const logs = Array.isArray(logsRaw) ? logsRaw : [];
+      logs.unshift({
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        type,
+        message,
+      });
+      await saveLogs(logs);
+    })
+    .catch(() => {}); // never let one failed write break the queue for subsequent logs
+  return logWriteQueue;
 }
 
 // ─── Usage Cache ─────────────────────────────────────────────────────────────

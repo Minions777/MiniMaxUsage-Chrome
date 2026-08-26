@@ -1,17 +1,17 @@
 // MiniMax Token Monitor - Billing Cache Logic
 // Token consumption statistics: caching, expiry, and refresh.
+// Freshness decision delegated to pure isBillingCacheFresh (lib/utils.js) so
+// tests exercise the real TTL logic instead of re-deriving it.
 
 /**
- * Load cached billing records. Returns [] if cache is missing or expired.
- * Callers should check for empty result and trigger a force refresh if needed.
+ * Load cached billing records. Returns [] if cache is missing, has no records,
+ * or is expired (per BILLING_CACHE_TTL_MS). Callers should check for empty
+ * result and trigger a force refresh if needed.
  */
 async function loadCachedBilling() {
   const { [BILLING_CACHE_KEY]: cache } =
     await chrome.storage.local.get(BILLING_CACHE_KEY);
-  if (!cache || !cache.records) return [];
-  if (Date.now() - (cache.fetchedAt || 0) > BILLING_CACHE_TTL_MS) {
-    return []; // Expired — caller should force-refresh
-  }
+  if (!isBillingCacheFresh(cache, BILLING_CACHE_TTL_MS)) return [];
   return cache.records;
 }
 

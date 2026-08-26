@@ -9,7 +9,9 @@
 // be terminated at any time; only top-level registrations are persisted.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Load shared utilities first (formatNumber, daysUntil, calculateTokenStats, etc.)
+// Load shared utilities first (formatNumber, daysUntil, calculateTokenStats,
+// resolveUsagePercents, selectMainModel, dedupWindowKey, shouldIncludeBilling,
+// shouldRetryStatus, badgeColorHex, pruneLogs, pruneHistoryRecords, etc.)
 // then background modules in dependency order:
 //   config → storage → api → billing → badge → alarms → core
 try {
@@ -33,18 +35,16 @@ try {
  * Auto-refresh alarm handler.
  *
  * [Task-7] IMPROVEMENT: Automatically includes billing refresh when the
- * billing cache is expired (≈every 30 min). Previously, auto-refresh never
- * fetched billing data, leaving Token consumption stats stale until the
- * user manually triggered a refresh.
+ * billing cache is expired (≈every 30 min). The freshness decision is delegated
+ * to pure shouldIncludeBilling() (lib/utils.js) so this handler does not reach
+ * into billing.js's private cache shape. fetchUsage's in-flight guard dedupes
+ * concurrent calls from the SW-restart init IIFE below.
  */
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'autoRefresh') {
-    // Check if billing cache is expired — include billing fetch if so
     const { [BILLING_CACHE_KEY]: billingCache } =
       await chrome.storage.local.get(BILLING_CACHE_KEY);
-    const includeBilling = !billingCache
-      || !billingCache.records || billingCache.records.length === 0
-      || Date.now() - (billingCache.fetchedAt || 0) > BILLING_CACHE_TTL_MS;
+    const includeBilling = shouldIncludeBilling(billingCache, BILLING_CACHE_TTL_MS);
 
     await fetchUsage({ includeBilling });
     chrome.runtime.sendMessage({ type: 'USAGE_UPDATED' }).catch(() => {});
@@ -73,13 +73,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       getHistory().then(sendResponse);
       return true;
     case 'CLEAR_HISTORY':
-      chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: [] }).then(sendResponse);
+      chrome.storage.local.set({ [STORAGE_KEYS.HISTORY]: [] }).then(() => sendResponse({ success: true }));
       return true;
     case 'GET_LOGS':
       getLogs().then(sendResponse);
       return true;
     case 'CLEAR_LOGS':
-      chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: [] }).then(sendResponse);
+      chrome.storage.local.set({ [STORAGE_KEYS.LOGS]: [] }).then(() => sendResponse({ success: true }));
       return true;
     case 'START_AUTO_REFRESH':
       startAutoRefresh().then(sendResponse);
@@ -87,6 +87,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'REFRESH_USAGE':
       (async () => {
         try {
+          // force=true bypasses throttle AND runs its own fetch (does not share
+          // an in-flight non-force fetch), so a manual refresh always hits the API.
           const result = await fetchUsage({ force: true, includeBilling: true });
           sendResponse(result);
         } catch (e) {
@@ -94,35 +96,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       })();
       return true;
-    case 'REFRESH_BILLING':
-      (async () => {
-        const settings = await getSettings();
-        if (!settings.apiKey) {
-          sendResponse({ error: 'NO_API_KEY', records: [] });
-          return;
-        }
-        try {
-          const endpoint = ENDPOINTS[settings.endpoint];
-          const [records, totalTokens] = await Promise.all([
-            fetchAndCacheBilling(settings.apiKey, endpoint),
-            fetchTotalTokens(settings.apiKey, endpoint),
-          ]);
-          const tokenStats = calculateTokenStats(records, undefined, totalTokens);
-          sendResponse({ records, tokenStats, totalTokens });
-        } catch (e) {
-          sendResponse({ error: e.message || 'NETWORK_ERROR', records: [] });
-        }
-      })();
-      return true;
   }
 });
 
-// ─── Initialization ──────────────────────────────────────────────────────
+// ─── Initialization ──────────────────────────────────────────────────────────
 
 /**
  * [Task-7] IMPROVED: On SW restart with cached data, if billing cache is
  * expired/empty, proactively fetch billing data so Token stats are available
  * when the user opens the popup (instead of showing stale/empty data).
+ * Non-blocking; fetchUsage's in-flight guard dedupes with any concurrent alarm.
  */
 (async () => {
   const settings = await getSettings();

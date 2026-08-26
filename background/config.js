@@ -17,18 +17,42 @@ const STORAGE_KEYS = {
   LAST_WINDOW_KEY: 'minimax_last_window_key',
 };
 
+// ─── Notification policy ──────────────────────────────────────────────────────
 // Desktop notification default threshold (notify when remaining% < this value)
 const DEFAULT_NOTIFY_THRESHOLD = 10;
 // Max number of recent notified window keys to keep (prevents notification spam)
 const NOTIFIED_KEYS_LIMIT = 10;
 
+// ─── Refresh / cache timing ───────────────────────────────────────────────────
 // Throttle window for main usage fetch (ms). If a fetch was done within this
 // interval, return cached data instead of hitting the API again.
 const USAGE_REFRESH_THROTTLE_MS = 60_000;
+
 // Billing (Token consumption) cache TTL — 30 minutes.
 // Billing changes slowly; no need to refresh it as frequently as quota data.
 const BILLING_CACHE_TTL_MS = 30 * 60 * 1000;
 const BILLING_CACHE_KEY = 'minimax_billing_cache';
+
+// Subscription (plan expiry) cache TTL — 6 hours.
+// Plan expiry changes at most daily; avoid re-fetching every refresh cycle.
+const SUBSCRIPTION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const SUBSCRIPTION_CACHE_KEY = 'minimax_subscription_cache';
+
+// Lifetime aggregate token consumption cache TTL — 10 minutes.
+// Changes slowly; the aggregate endpoint is cheap but still avoidable.
+const TOTAL_TOKENS_CACHE_TTL_MS = 10 * 60 * 1000;
+const TOTAL_TOKENS_CACHE_KEY = 'minimax_total_tokens_cache';
+
+// ─── Retention / pagination limits ───────────────────────────────────────────
+// Centralized so retention policy changes are a one-line edit, not a multi-file
+// hunt. (billing fetch/aggregation window lives in lib/utils.js BILLING_WINDOW_DAYS
+// because utils.js loads before this module and cannot reference it.)
+const HISTORY_RETENTION_DAYS = 30;   // drop usage snapshots older than this
+const HISTORY_MAX_PER_DAY = 24;       // cap records per day in history
+const LOG_RETENTION_DAYS = 7;         // drop logs older than this
+const LOG_MAX = 200;                  // max log entries kept (newest-first)
+const BILLING_MAX_PAGES = 30;         // safety cap to prevent infinite pagination
+const BILLING_PAGE_SIZE = 100;        // records per billing page
 
 const ENDPOINTS = {
   china: {
