@@ -227,21 +227,22 @@ describe('fetchSubscription / fetchTotalTokens TTL caching (real api.js)', () =>
 // ─── fetchUsage in-flight mutex (real core.js) ─────────────────────────────────
 
 describe('fetchUsage in-flight mutex (real core.js)', () => {
-  function makeRemainsBody(usedPct = 80) {
+  function makeRemainsBody(remainingPct = 80, weeklyBoostPermille) {
     return {
       base_resp: { status_code: 0 },
       model_remains: [{
         model_name: 'MiniMax-M1',
         current_interval_total_count: 1000,
         current_interval_usage_count: 200,
-        current_interval_remaining_percent: usedPct, // used 80% → 20% remaining
+        current_interval_remaining_percent: remainingPct, // remaining % (of boosted)
         remains_time: 3600000,
         start_time: 1700000000000,
         end_time: 1700018000000,
         current_weekly_total_count: 5000,
         current_weekly_usage_count: 1000,
-        current_weekly_remaining_percent: usedPct,
+        current_weekly_remaining_percent: remainingPct,
         weekly_remains_time: 7200000,
+        weekly_boost_permille: weeklyBoostPermille,
       }],
     };
   }
@@ -271,8 +272,9 @@ describe('fetchUsage in-flight mutex (real core.js)', () => {
     const p2 = ctx.fetchUsage({}); // concurrent, same cycle
     await vi.advanceTimersByTimeAsync(20000);
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.intervalRemainingPercent).toBe(20); // 100 - 80, corrected + clamped
-    expect(r2.intervalRemainingPercent).toBe(20);
+    expect(r1.intervalRemainingPercent).toBe(80); // 80% remaining → 20% used
+    expect(r1.intervalUsedPercent).toBe(20);
+    expect(r2.intervalRemainingPercent).toBe(80);
     const remainsCalls = fetchStub.mock.calls.filter(c => c[0].includes('/remains')).length;
     expect(remainsCalls).toBe(1); // mutex deduped the second concurrent call
   });
@@ -285,12 +287,12 @@ describe('fetchUsage in-flight mutex (real core.js)', () => {
     const p2 = ctx.fetchUsage({ force: true }); // force → skips dedup, own fetch
     await vi.advanceTimersByTimeAsync(20000);
     const [, r2] = await Promise.all([p1, p2]);
-    expect(r2.intervalRemainingPercent).toBe(20);
+    expect(r2.intervalRemainingPercent).toBe(80); // 80% remaining → 20% used
     const remainsCalls = fetchStub.mock.calls.filter(c => c[0].includes('/remains')).length;
     expect(remainsCalls).toBe(2); // force bypassed the in-flight non-force
   });
 
-  it('applies the M3 reversal + clamp end-to-end (used 92% → 8% remaining)', async () => {
+  it('resolves raw remaining% → used%/remaining% end-to-end (remaining 92 → 8% used)', async () => {
     const fetchStub = vi.fn(async (url) => {
       if (url.includes('/remains')) return ok(makeRemainsBody(92));
       if (url.includes('cycle_audio_resource_package')) return ok({ current_subscribe: null });
@@ -303,8 +305,31 @@ describe('fetchUsage in-flight mutex (real core.js)', () => {
     const p = ctx.fetchUsage({ force: true });
     await vi.advanceTimersByTimeAsync(20000);
     const r = await p;
-    expect(r.intervalRemainingPercent).toBe(8);   // 100 - 92
-    expect(r.weeklyRemainingPercent).toBe(8);
-    expect(chrome.store.local['minimax_last_usage'].intervalRemainingPercent).toBe(8);
+    // 92% remaining (no boost) → 8% used
+    expect(r.intervalRemainingPercent).toBe(92);
+    expect(r.intervalUsedPercent).toBe(8);
+    expect(r.weeklyRemainingPercent).toBe(92);
+    expect(r.weeklyUsedPercent).toBe(8);
+    expect(chrome.store.local['minimax_last_usage'].intervalUsedPercent).toBe(8);
+  });
+
+  it('applies the weekly boost factor to match the official site (remaining 70, 1.5× → 45% used)', async () => {
+    const fetchStub = vi.fn(async (url) => {
+      if (url.includes('/remains')) return ok(makeRemainsBody(70, 1500));
+      if (url.includes('cycle_audio_resource_package')) return ok({ current_subscribe: null });
+      if (url.includes('aggregate=true')) return ok({ consume_token_sum: 0 });
+      if (url.includes('/account/amount')) return ok({ charge_records: [] });
+      return ok({});
+    });
+    const chrome = createChromeMock({ local: { minimax_api_key: 'test-key' } });
+    const ctx = loadFullContext(chrome, fetchStub);
+    const p = ctx.fetchUsage({ force: true });
+    await vi.advanceTimersByTimeAsync(20000);
+    const r = await p;
+    // weekly: (100-70) × 1.5 = 45% used of base — matches the official site
+    expect(r.weeklyUsedPercent).toBe(45);
+    expect(r.weeklyRemainingPercent).toBe(55);
+    // interval has no boost: (100-70) × 1.0 = 30% used
+    expect(r.intervalUsedPercent).toBe(30);
   });
 });

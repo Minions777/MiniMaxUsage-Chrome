@@ -3,15 +3,21 @@
 // history recording, badge update, and notification dispatch.
 //
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ⚠️⚠️⚠️  M3 API CRITICAL SEMANTIC NOTE  ⚠️⚠️⚠️
+// ⚠️  M3 API SEMANTIC NOTE  ⚠️
 //
-// The MiniMax M3 API field `current_interval_remaining_percent` is
-// SEMANTICALLY REVERSED from what its name implies: it actually means
-// "USED percent". The reversal (100 - value) + clamp to [0,100] + count-based
-// fallback is applied here via correctRemainingPct() (lib/utils.js), which is
-// the single source of truth for that logic. Downstream consumers (badge.js,
-// popup/display.js) receive a guaranteed 0..100 integer and must NOT re-derive
-// it. The same applies to `current_weekly_remaining_percent`.
+// The MiniMax M3 API fields `current_interval_remaining_percent` and
+// `current_weekly_remaining_percent` are TRUTHFULLY named: they are the
+// REMAINING percent, measured against the (possibly boosted) total. The weekly
+// total can be boosted above the base quota by `weekly_boost_permille`
+// (1500 = 1.5×). resolveUsagePercents() (lib/utils.js) converts these to
+// used% / remaining% relative to the BASE — matching the official site's
+// "已用%" — with clamp + count-based fallback. It is the single source of
+// truth; downstream consumers (badge.js, popup/display.js) receive guaranteed
+// 0..100 integers and must NOT re-derive them.
+//
+// (The earlier code wrongly did `100 - value`, treating the field as "used%",
+//  and ignored the boost — the cause of the "extension 30% vs official 43%"
+//  discrepancy. See resolveUsagePercents() in lib/utils.js.)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // In-flight guard: while a fetch is running, concurrent NON-force callers share
@@ -81,9 +87,12 @@ async function doFetchUsage({ force = false, includeBilling = false } = {}) {
     const intervalUsedCount = mainModel.current_interval_usage_count || 0;
     const intervalRemains = intervalTotal - intervalUsedCount;
 
-    // ⚠️ M3 reversal + clamp + fallback — single source: correctRemainingPct
-    const intervalRemainingPercent = correctRemainingPct(
-      mainModel.current_interval_remaining_percent, intervalTotal, intervalUsedCount);
+    // M3: resolve used% & remaining% (relative to base). The 5-hour interval
+    // has no boost, so boostPermille=1000. Single source: resolveUsagePercents.
+    const intervalPercents = resolveUsagePercents(
+      mainModel.current_interval_remaining_percent, 1000, intervalTotal, intervalUsedCount);
+    const intervalUsedPercent = intervalPercents.usedPct;
+    const intervalRemainingPercent = intervalPercents.remainingPct;
 
     // M3: remains_time is relative (ms) → compute absolute reset timestamp
     const intervalResetMs = mainModel.remains_time || 0;
@@ -99,9 +108,14 @@ async function doFetchUsage({ force = false, includeBilling = false } = {}) {
     const weeklyUsedCount = mainModel.current_weekly_usage_count || 0;
     const weeklyRemains = weeklyTotal - weeklyUsedCount;
 
-    // ⚠️ M3 reversal + clamp + fallback (same as interval)
-    const weeklyRemainingPercent = correctRemainingPct(
-      mainModel.current_weekly_remaining_percent, weeklyTotal, weeklyUsedCount);
+    // M3: the weekly total can be boosted above the base quota by
+    // weekly_boost_permille (1500 = 1.5×). resolveUsagePercents normalizes
+    // used% to the BASE so it matches the official site's "已用%".
+    const weeklyBoostPermille = mainModel.weekly_boost_permille || 1000;
+    const weeklyPercents = resolveUsagePercents(
+      mainModel.current_weekly_remaining_percent, weeklyBoostPermille, weeklyTotal, weeklyUsedCount);
+    const weeklyUsedPercent = weeklyPercents.usedPct;
+    const weeklyRemainingPercent = weeklyPercents.remainingPct;
 
     const weeklyResetMs = mainModel.weekly_remains_time || 0;
     const weeklyResetTime = weeklyResetMs > 0 ? Date.now() + weeklyResetMs : null;
@@ -135,7 +149,8 @@ async function doFetchUsage({ force = false, includeBilling = false } = {}) {
       intervalUsed: intervalUsedCount,
       intervalRemains,
       intervalTotal,
-      intervalRemainingPercent,   // ⚠️ CORRECTED (reversed + clamped, 0..100)
+      intervalRemainingPercent,   // remaining % (of base) — for badge color
+      intervalUsedPercent,        // used % (of base) — ring displays this
       intervalResetTime,
       intervalResetMs,
 
@@ -147,7 +162,8 @@ async function doFetchUsage({ force = false, includeBilling = false } = {}) {
       weeklyUsed: weeklyUsedCount,
       weeklyRemains,
       weeklyTotal,
-      weeklyRemainingPercent,      // ⚠️ CORRECTED (reversed + clamped, 0..100)
+      weeklyRemainingPercent,      // remaining % (of base)
+      weeklyUsedPercent,           // used % (of base) — ring displays this
       weeklyResetTime,
       weeklyResetMs,
 
@@ -187,7 +203,7 @@ async function doFetchUsage({ force = false, includeBilling = false } = {}) {
 
     // Record in history (dedup handled by addHistoryRecord)
     await addHistoryRecord(usage);
-    await addLog('success', `获取用量成功 — 剩余 ${intervalRemains} / 总计 ${intervalTotal} (${intervalRemainingPercent ?? '--'}%)`);
+    await addLog('success', `获取用量成功 — 5h已用 ${intervalUsedPercent}% (剩余 ${intervalRemains}/${intervalTotal}); 本周已用 ${weeklyUsedPercent}%`);
     updateBadge(usage);
     await maybeNotifyLowUsage(usage);
 

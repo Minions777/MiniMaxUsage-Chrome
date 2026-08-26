@@ -107,8 +107,12 @@
   const RING_RADIUS = 50;
   const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-  function paintRing(svgEl, percentEl, remainingPct, isWeekly) {
-    const offset = RING_CIRCUMFERENCE * (1 - remainingPct);
+  function paintRing(svgEl, percentEl, usedPct, isWeekly) {
+    // Ring fill grows with usage; color follows the REMAINING fraction so the
+    // green/orange/red thresholds (colorForPercentage) keep their "low
+    // remaining = red" meaning even though the number shown is 已用%.
+    const remainingPct = 1 - usedPct;
+    const offset = RING_CIRCUMFERENCE * (1 - usedPct);
     const colorInfo = colorForPercentage(remainingPct, isWeekly);
 
     svgEl.style.strokeDasharray = RING_CIRCUMFERENCE;
@@ -116,25 +120,27 @@
     svgEl.style.stroke = colorInfo.gradient;
     svgEl.style.filter = `drop-shadow(0 0 6px ${colorInfo.shadow})`;
 
-    percentEl.textContent = Math.round(remainingPct * 100) + '%';
+    percentEl.textContent = Math.round(usedPct * 100) + '%';
     percentEl.style.color = colorInfo.color;
     percentEl.style.textShadow = `0 0 10px ${colorInfo.shadow}`;
   }
 
   // ─── Usage rendering ──────────────────────────────────────────────────────
 
-  // M3: remainingPercent is already corrected + clamped to 0..100 by core.js
-  // (correctRemainingPct). Trust it — do not re-derive from used/total here.
+  // M3: usedPercent/remainingPercent are already resolved + clamped to 0..100
+  // by core.js (resolveUsagePercents). Trust them — do not re-derive here.
+  // Rings display 已用% (matches the official site); color is derived from
+  // the remaining fraction inside paintRing.
   function displayUsage(usage) {
     initDom();
 
-    // 5-hour ring
-    const remainingPct = (usage.intervalRemainingPercent ?? 0) / 100;
-    paintRing(dom.ringProgress, dom.ringPercent, remainingPct, false);
+    // 5-hour ring (已用%)
+    const intervalUsedPct = (usage.intervalUsedPercent ?? 0) / 100;
+    paintRing(dom.ringProgress, dom.ringPercent, intervalUsedPct, false);
 
-    // Weekly ring
-    const weeklyRemainingPct = (usage.weeklyRemainingPercent ?? 0) / 100;
-    paintRing(dom.weeklyRingProgress, dom.weeklyRingPercent, weeklyRemainingPct, true);
+    // Weekly ring (已用%)
+    const weeklyUsedPct = (usage.weeklyUsedPercent ?? 0) / 100;
+    paintRing(dom.weeklyRingProgress, dom.weeklyRingPercent, weeklyUsedPct, true);
 
     // Reset time
     dom.intervalResetTime.textContent = usage.intervalResetTimeStr || '--';

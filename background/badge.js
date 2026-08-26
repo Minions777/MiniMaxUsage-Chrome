@@ -1,12 +1,13 @@
 // MiniMax Token Monitor - Badge & Desktop Notification
 // Extension icon badge text/color update and low-usage desktop notifications.
 //
-// ⚠️ M3 API CRITICAL SEMANTIC NOTE (applies to all functions in this file):
-// `current_interval_remaining_percent` means "USED %" not "remaining %".
-// The reversal + clamp is applied in background/core.js via correctRemainingPct
-// (lib/utils.js), so by the time these functions receive
-// usage.intervalRemainingPercent it is a true 0..100 "remaining%" (higher =
-// more quota available). Badge color + notification logic operate on it.
+// ⚠️ M3 API SEMANTIC NOTE (applies to all functions in this file):
+// `current_interval_remaining_percent` is TRUTHFULLY "remaining %" (of the
+// boosted total). background/core.js resolves it via resolveUsagePercents
+// (lib/utils.js) into used% / remaining% relative to the BASE. By the time
+// these functions receive usage.intervalRemainingPercent it is a true 0..100
+// "remaining%" (higher = more quota available). Badge color + notification
+// logic operate on that remaining%.
 
 /**
  * Update extension icon badge with remaining percentage and color.

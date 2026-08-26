@@ -10,7 +10,7 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Load shared utilities first (formatNumber, daysUntil, calculateTokenStats,
-// correctRemainingPct, selectMainModel, dedupWindowKey, shouldIncludeBilling,
+// resolveUsagePercents, selectMainModel, dedupWindowKey, shouldIncludeBilling,
 // shouldRetryStatus, badgeColorHex, pruneLogs, pruneHistoryRecords, etc.)
 // then background modules in dependency order:
 //   config → storage → api → billing → badge → alarms → core

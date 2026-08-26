@@ -141,36 +141,51 @@ describe('escapeHtml (no-DOM fallback)', () => {
 // breaking the production logic now actually fails these tests.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('correctRemainingPct (M3 reversal + clamp + fallback)', () => {
-  it('reverses the M3 "used %" field to true remaining %', () => {
-    // API 92 means 92% USED → 8% remaining
-    expect(u.correctRemainingPct(92, 1500, 0)).toBe(8);
-    expect(u.correctRemainingPct(20, 1500, 0)).toBe(80);
+describe('resolveUsagePercents (M3 remaining% → used%/remaining% of base)', () => {
+  it('converts raw remaining% to used% (no boost = 1.0×)', () => {
+    // API 1 = 1% remaining → 99% used (matches official 5h: 已用 99%)
+    expect(u.resolveUsagePercents(1, 1000, 0, 0)).toEqual({ usedPct: 99, remainingPct: 1 });
+    // API 92 = 92% remaining → 8% used
+    expect(u.resolveUsagePercents(92, 1000, 0, 0)).toEqual({ usedPct: 8, remainingPct: 92 });
+  });
+  it('applies the weekly boost factor (matches official 本周已用 45%)', () => {
+    // raw remaining 70 of a 1.5× boosted total → used of base = (100-70)*1.5 = 45
+    expect(u.resolveUsagePercents(70, 1500, 0, 0)).toEqual({ usedPct: 45, remainingPct: 55 });
+    // raw 69 of 1.5× → (100-69)*1.5 = 46.5 → round 47
+    expect(u.resolveUsagePercents(69, 1500, 0, 0)).toEqual({ usedPct: 47, remainingPct: 53 });
   });
   it('handles the 0/100 extremes', () => {
-    expect(u.correctRemainingPct(0, 1500, 0)).toBe(100);   // 0% used → 100% remaining
-    expect(u.correctRemainingPct(100, 1500, 0)).toBe(0);    // 100% used → 0% remaining
+    // 0% remaining → 100% used
+    expect(u.resolveUsagePercents(0, 1000, 0, 0)).toEqual({ usedPct: 100, remainingPct: 0 });
+    // 100% remaining → 0% used (an inactive/unused model)
+    expect(u.resolveUsagePercents(100, 1000, 0, 0)).toEqual({ usedPct: 0, remainingPct: 100 });
   });
   it('clamps out-of-range API values to [0,100]', () => {
-    expect(u.correctRemainingPct(-5, 1500, 0)).toBe(100);   // -5 used → 105 → clamped 100
-    expect(u.correctRemainingPct(105, 1500, 0)).toBe(0);   // 105 used → -5 → clamped 0
-    expect(u.correctRemainingPct(150, 1500, 0)).toBe(0);
+    // -5 remaining → (100-(-5))*1 = 105 used → clamped 100
+    expect(u.resolveUsagePercents(-5, 1000, 0, 0)).toEqual({ usedPct: 100, remainingPct: 0 });
+    // 105 remaining → (100-105) = -5 used → clamped 0
+    expect(u.resolveUsagePercents(105, 1000, 0, 0)).toEqual({ usedPct: 0, remainingPct: 100 });
+    expect(u.resolveUsagePercents(150, 1000, 0, 0)).toEqual({ usedPct: 0, remainingPct: 100 });
   });
   it('falls back to count-based ratio when the API field is null/undefined', () => {
-    expect(u.correctRemainingPct(null, 1500, 300)).toBe(80);    // 1200/1500
-    expect(u.correctRemainingPct(undefined, 1000, 750)).toBe(25); // 250/1000
+    // 300 used of 1500 → 20% used
+    expect(u.resolveUsagePercents(null, 1000, 1500, 300)).toEqual({ usedPct: 20, remainingPct: 80 });
+    // 750 used of 1000 → 75% used
+    expect(u.resolveUsagePercents(undefined, 1000, 1000, 750)).toEqual({ usedPct: 75, remainingPct: 25 });
   });
-  it('returns 0 when the API field is absent and total is 0', () => {
-    expect(u.correctRemainingPct(null, 0, 0)).toBe(0);
-    expect(u.correctRemainingPct(undefined, 0, 5)).toBe(0);
+  it('returns 0% used when the API field is absent and total is 0', () => {
+    expect(u.resolveUsagePercents(null, 1000, 0, 0)).toEqual({ usedPct: 0, remainingPct: 100 });
+    expect(u.resolveUsagePercents(undefined, 1000, 0, 5)).toEqual({ usedPct: 0, remainingPct: 100 });
   });
-  it('never returns null (consumers can trust the value)', () => {
+  it('usedPct + remainingPct always sum to 100 and are integers in [0,100]', () => {
     for (const v of [null, undefined, 0, 50, 100, -5, 105]) {
-      const r = u.correctRemainingPct(v, 1000, 500);
+      const r = u.resolveUsagePercents(v, 1000, 500);
       expect(r).not.toBe(null);
-      expect(Number.isInteger(r)).toBe(true);
-      expect(r).toBeGreaterThanOrEqual(0);
-      expect(r).toBeLessThanOrEqual(100);
+      expect(Number.isInteger(r.usedPct)).toBe(true);
+      expect(Number.isInteger(r.remainingPct)).toBe(true);
+      expect(r.usedPct).toBeGreaterThanOrEqual(0);
+      expect(r.usedPct).toBeLessThanOrEqual(100);
+      expect(r.usedPct + r.remainingPct).toBe(100);
     }
   });
 });
